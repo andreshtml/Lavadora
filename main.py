@@ -35,8 +35,8 @@ def registrar_log(accion):
     conn.commit()
 
 # --- ESTADO DE NAVEGACIÓN ---
-if 'paso_despacho' not in st.session_state:
-    st.session_state.paso_despacho = "Registro"
+if 'radio_despacho' not in st.session_state:
+    st.session_state.radio_despacho = "Registro"
 
 # --- AUTENTICACIÓN ---
 if 'auth' not in st.session_state: st.session_state['auth'] = False
@@ -91,10 +91,10 @@ if menu == "🧺 Inventario Equipos":
 elif menu == "👥 Clientes y Despacho":
     st.title("👥 Gestión de Clientes y Salida")
 
-    # Usamos un radio horizontal para simular pestañas controlables
+    # Usamos el session_state vinculado al radio para controlar la pestaña activa
     opcion = st.radio("Seleccione Acción:", ["Registro", "Despacho"], 
-                      index=0 if st.session_state.paso_despacho == "Registro" else 1,
-                      horizontal=True, key="radio_despacho")
+                      key="radio_despacho",
+                      horizontal=True)
 
     if opcion == "Registro":
         def procesar_cliente():
@@ -108,9 +108,12 @@ elif menu == "👥 Clientes y Despacho":
                 c.execute("INSERT INTO clientes (nombre, tel, lat, lon, notas, fecha_registro) VALUES (?,?,?,?,?,?)",
                          (nom, tel, lat, lon, st.session_state.c_nota, datetime.now()))
                 conn.commit()
-                # CAMBIO CLAVE: Cambiamos el estado para saltar al siguiente paso
-                st.session_state.paso_despacho = "Despacho"
-                st.toast(f"✅ Cliente {nom} registrado. Redirigiendo a Despacho...")
+                
+                # CAMBIO SOLICITADO: Cambiamos a despacho y refrescamos
+                st.session_state.radio_despacho = "Despacho"
+                st.toast(f"✅ Cliente {nom} registrado. Redirigiendo...")
+                time.sleep(0.6)
+                st.rerun()
             else: st.error("Nombre y Teléfono requeridos")
 
         with st.form("reg_cli", clear_on_submit=True):
@@ -123,9 +126,8 @@ elif menu == "👥 Clientes y Despacho":
 
     else:
         st.subheader("🚀 Despacho de Equipos")
-        # Botón para volver al registro si es necesario
-        if st.button("⬅️ Registrar otro cliente"):
-            st.session_state.paso_despacho = "Registro"
+        if st.button("⬅️ Volver a Registro"):
+            st.session_state.radio_despacho = "Registro"
             st.rerun()
 
         df_c = pd.read_sql_query("SELECT id, nombre, tel FROM clientes ORDER BY id DESC", conn)
@@ -134,7 +136,6 @@ elif menu == "👥 Clientes y Despacho":
 
         if not df_c.empty and not df_l.empty:
             c1, c2 = st.columns(2)
-            # El cliente recién registrado aparecerá de primero por el ORDER BY DESC
             c_sel = c1.selectbox("👤 Seleccionar Cliente", df_c['nombre'])
             l_sel = c1.selectbox("🧺 Seleccionar Lavadora", df_l['serie'])
             rep_sel = c2.selectbox("🚚 Asignar Repartidor", df_r['usuario'])
@@ -155,8 +156,6 @@ elif menu == "👥 Clientes y Despacho":
                 url_wa = f"https://wa.me/{row_c['tel']}?text={msg.replace(' ', '%20')}"
                 st.success("Salida exitosa.")
                 st.link_button("📲 Enviar WhatsApp", url_wa)
-                # Volvemos al estado inicial después del despacho
-                st.session_state.paso_despacho = "Registro"
         else:
             st.warning("No hay clientes registrados o lavadoras disponibles.")
 
@@ -214,4 +213,3 @@ elif menu == "⚙️ Configuración":
     if st.button("RESET TOTAL") and confirm == "BORRAR":
         c.execute("DELETE FROM clientes"); c.execute("DELETE FROM alquileres_activos")
         c.execute("DELETE FROM lavadoras"); conn.commit(); st.rerun()
-            
