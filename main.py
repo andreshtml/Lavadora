@@ -1,4 +1,4 @@
- import streamlit as st
+import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime, timedelta
@@ -214,4 +214,4 @@ elif menu == "⚙️ Configuración":
     if st.button("RESET TOTAL") and confirm == "BORRAR":
         c.execute("DELETE FROM clientes"); c.execute("DELETE FROM alquileres_activos")
         c.execute("DELETE FROM lavadoras"); conn.commit(); st.rerun()
-       
+             
