@@ -91,7 +91,7 @@ if menu == "🧺 Inventario Equipos":
 elif menu == "👥 Clientes y Despacho":
     st.title("👥 Gestión de Clientes y Salida")
 
-    # Usamos el session_state vinculado al radio para controlar la pestaña activa
+    # Radio vinculado al session_state
     opcion = st.radio("Seleccione Acción:", ["Registro", "Despacho"], 
                       key="radio_despacho",
                       horizontal=True)
@@ -109,10 +109,10 @@ elif menu == "👥 Clientes y Despacho":
                          (nom, tel, lat, lon, st.session_state.c_nota, datetime.now()))
                 conn.commit()
                 
-                # CAMBIO SOLICITADO: Cambiamos a despacho y refrescamos
+                # Cambiamos el estado para saltar a Despacho
                 st.session_state.radio_despacho = "Despacho"
-                st.toast(f"✅ Cliente {nom} registrado. Redirigiendo...")
-                time.sleep(0.6)
+                st.toast(f"✅ Cliente {nom} registrado")
+                time.sleep(0.5)
                 st.rerun()
             else: st.error("Nombre y Teléfono requeridos")
 
@@ -124,9 +124,11 @@ elif menu == "👥 Clientes y Despacho":
             st.text_area("Notas de Dirección", key="c_nota")
             st.form_submit_button("Guardar Cliente y Continuar", on_click=procesar_cliente)
 
-    else:
+    elif opcion == "Despacho":
         st.subheader("🚀 Despacho de Equipos")
-        if st.button("⬅️ Volver a Registro"):
+        
+        # FUNCIONALIDAD SOLICITADA: Botón para volver a Registro de forma efectiva
+        if st.button("⬅️ Volver a Registro de Clientes"):
             st.session_state.radio_despacho = "Registro"
             st.rerun()
 
@@ -203,8 +205,11 @@ elif menu == "📊 Reporte Admin":
     if rol_actual != "Admin": st.error("Acceso denegado"); st.stop()
     st.title("📊 Resumen de Ventas")
     df_h = pd.read_sql_query("SELECT * FROM historial_alquileres", conn)
-    st.metric("Total Recaudado", f"${df_h['monto'].sum():,.2f}")
-    st.dataframe(df_h)
+    if not df_h.empty:
+        st.metric("Total Recaudado", f"${df_h['monto'].sum():,.2f}")
+        st.dataframe(df_h)
+    else:
+        st.info("No hay historial de ventas.")
 
 # --- MÓDULO 5: CONFIGURACIÓN ---
 elif menu == "⚙️ Configuración":
@@ -213,4 +218,4 @@ elif menu == "⚙️ Configuración":
     if st.button("RESET TOTAL") and confirm == "BORRAR":
         c.execute("DELETE FROM clientes"); c.execute("DELETE FROM alquileres_activos")
         c.execute("DELETE FROM lavadoras"); conn.commit(); st.rerun()
-                
+    
