@@ -3,6 +3,7 @@ import pandas as pd
 import sqlite3
 from datetime import datetime, timedelta
 import re
+import time
 from contextlib import contextmanager
 
 # --- CONFIGURACIÓN ESTÉTICA ---
@@ -13,6 +14,7 @@ DB_NAME = 'sistema_lavanderia_v4.db'
 
 @contextmanager
 def db_connection():
+    """Gestiona la conexión de forma segura para evitar bloqueos de hilos."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
@@ -58,7 +60,13 @@ if not st.session_state['auth']:
 
 # --- NAVEGACIÓN LATERAL ---
 st.sidebar.title(f"👤 {st.session_state['user']}")
-menu = st.sidebar.selectbox("Menú Principal", ["🧺 Equipos", "👥 Clientes/Despacho", "⏱️ Monitor", "🚚 Recepción", "📊 Reportes"])
+
+# Definir opciones del menú (La configuración solo aparece para Admin)
+opciones_menu = ["🧺 Equipos", "👥 Clientes/Despacho", "⏱️ Monitor", "🚚 Recepción", "📊 Reportes"]
+if st.session_state['rol'] == "Admin":
+    opciones_menu.append("⚙️ Configuración")
+
+menu = st.sidebar.selectbox("Menú Principal", opciones_menu)
 
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state['auth'] = False
@@ -146,7 +154,7 @@ elif menu == "👥 Clientes/Despacho":
             
             if 'last_dispatch' in st.session_state:
                 disp = st.session_state.last_dispatch
-                msg = (f"✅ *LAVANDERÍA LOS AUTÉNTICOS EXPRESS*\n\n"
+                msg = (f"✅ *LAVANDERÍA MASTER PRO*\n\n"
                        f"Hola *{disp['nombre']}*, tu equipo *{disp['equipo']}* ha sido despachado.\n"
                        f"⏰ Tiempo: *{disp['horas']} horas*.\n"
                        f"🔔 Retiro estimado: *{disp['fin']}*.\n\n"
@@ -217,37 +225,49 @@ elif menu == "📊 Reportes":
     if st.session_state['rol'] != "Admin": 
         st.error("Acceso restringido a Administradores.")
         st.stop()
-        
     st.title("📊 Reporte de Ventas")
-    
     with db_connection() as conn:
         df = pd.read_sql_query("SELECT * FROM historial_alquileres", conn)
     
     st.metric("Recaudación Total", f"${df['monto'].sum():,.2f}")
     st.dataframe(df, use_container_width=True)
 
-    # --- SECCIÓN DE PELIGRO (BORRADO DE DATOS) ---
-    st.divider()
-    with st.expander("⚠️ ZONA DE PELIGRO - Configuración Avanzada"):
-        st.warning("Las siguientes acciones son irreversibles. Proceda con precaución.")
+# --- MÓDULO 5: CONFIGURACIÓN (BORRADO) ---
+elif menu == "⚙️ Configuración":
+    st.title("⚙️ Mantenimiento del Sistema")
+    st.header("🗑️ Borrado de Base de Datos")
+    
+    with st.container(border=True):
+        st.error("### ⚠️ ADVERTENCIA CRÍTICA")
+        st.write("Esta acción eliminará permanentemente todos los registros de:")
+        st.write("*   Clientes registrados")
+        st.write("*   Inventario de lavadoras")
+        *   "Historial de ventas y alquileres activos"
         
-        # Checkbox de seguridad adicional
-        confirmacion = st.checkbox("Entiendo que borrar los datos eliminará todo el historial, clientes y equipos.")
+        st.info("Nota: Las cuentas de usuario (Admin/Cajera) no se borrarán.")
         
-        if st.button("🔥 ELIMINAR TODOS LOS DATOS DEL SISTEMA", type="secondary", disabled=not confirmacion):
+        # Doble factor de confirmación
+        confirm_check = st.checkbox("Confirmo que deseo vaciar todo el sistema.")
+        codigo_seguridad = st.text_input("Escriba 'BORRAR TODO' para habilitar el botón:")
+        
+        btn_borrar = st.button("🔥 EJECUTAR BORRADO TOTAL", 
+                               type="primary", 
+                               disabled=not (confirm_check and codigo_seguridad == "BORRAR TODO"),
+                               use_container_width=True)
+        
+        if btn_borrar:
             try:
                 with db_connection() as conn:
                     c = conn.cursor()
-                    # Borramos contenido de todas las tablas excepto 'usuarios'
                     c.execute("DELETE FROM historial_alquileres")
                     c.execute("DELETE FROM alquileres_activos")
                     c.execute("DELETE FROM lavadoras")
                     c.execute("DELETE FROM clientes")
                     conn.commit()
                 
-                st.toast("Base de datos limpiada con éxito", icon="🗑️")
-                st.success("Todos los registros han sido eliminados. El sistema está vacío.")
+                st.success("✅ Sistema restaurado correctamente. Redirigiendo...")
                 time.sleep(2)
                 st.rerun()
             except Exception as e:
-                st.error(f"Error al intentar borrar: {e}")
+                st.error(f"Error al limpiar base de datos: {e}")
+        
