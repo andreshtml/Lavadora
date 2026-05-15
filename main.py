@@ -195,7 +195,7 @@ elif menu == "⚙️ Configuración":
         st.info("Nota: Las cuentas de usuario no se verán afectadas.")
         
         check_confirm = st.checkbox("Entiendo que esto es irreversible y deseo continuar.")
-        clave_borrado = st.text_input("Escriba la frase de seguridad: **BORRAR TODO**")
+        clave_borrado = st.text_input("Escriba la frase de seguridad: **BORRAR**")
         
         # El botón solo se activa si se cumplen ambas condiciones
         if st.button("🔥 EJECUTAR BORRADO TOTAL", 
