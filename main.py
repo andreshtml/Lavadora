@@ -155,4 +155,4 @@ elif menu == "📊 Reporte Admin":
         st.title("📊 Historial de Ventas")
         st.dataframe(pd.read_sql_query("SELECT * FROM historial_alquileres", conn), use_container_width=True)
     else: st.error("Acceso restringido.")
-        
+                
