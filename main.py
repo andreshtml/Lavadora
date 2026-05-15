@@ -39,8 +39,8 @@ def inicializar_db():
 inicializar_db()
 
 # --- ESTADOS DE SESIÓN ---
-if 'paso_despacho' not in st.session_state: 
-    st.session_state.paso_despacho = 0  # 0: Registro, 1: Despacho
+if 'paso_idx' not in st.session_state:
+    st.session_state.paso_idx = 0  # 0 es Registro, 1 es Despacho
 if 'auth' not in st.session_state: 
     st.session_state['auth'] = False
 
@@ -94,26 +94,26 @@ if menu == "🧺 Equipos":
 elif menu == "👥 Clientes/Despacho":
     st.title("👥 Clientes y Salidas")
     
-    # El selector (punto rojo) ahora depende directamente de st.session_state.paso_despacho
+    # El radio button se controla mediante el índice almacenado en session_state
     opcion = st.radio(
         "Acción:", 
         ["Registro", "Despacho"], 
-        index=st.session_state.paso_despacho, 
+        index=st.session_state.paso_idx, 
         horizontal=True,
-        key="radio_despacho"
+        key="radio_nav"
     )
 
-    # Sincronizamos el estado si el usuario hace clic manualmente en el radio
-    st.session_state.paso_despacho = 0 if opcion == "Registro" else 1
+    # Si el usuario cambia manualmente el radio, actualizamos el índice
+    st.session_state.paso_idx = 0 if opcion == "Registro" else 1
 
-    if st.session_state.paso_despacho == 0:
+    if st.session_state.paso_idx == 0:
         with st.form("cli_form", clear_on_submit=True):
             st.subheader("📝 Nuevo Registro")
             nom = st.text_input("Nombre Completo")
             tel = st.text_input("WhatsApp (Incluir código de país)")
             gps = st.text_input("Link Ubicación")
             notas = st.text_area("Notas")
-            if st.form_submit_button("Guardar y Continuar"):
+            if st.form_submit_button("Guardar y Continuar al Despacho"):
                 if nom and tel:
                     coords = re.findall(r"([-+]?\d+\.\d+)", gps)
                     lat = float(coords[0]) if len(coords) >= 2 else 0.0
@@ -122,15 +122,16 @@ elif menu == "👥 Clientes/Despacho":
                         conn.execute("INSERT INTO clientes (nombre, tel, lat, lon, notas, fecha_registro) VALUES (?,?,?,?,?,?)",
                                      (nom, tel, lat, lon, notas, datetime.now()))
                         conn.commit()
-                    # Mueve el punto rojo a "Despacho" (index 1)
-                    st.session_state.paso_despacho = 1
+                    
+                    # CAMBIO AUTOMÁTICO A DESPACHO
+                    st.session_state.paso_idx = 1
                     st.rerun()
                 else: st.error("Nombre y Teléfono requeridos.")
 
     else:
-        # BOTÓN NUEVO: Ir a Registro (Mueve el punto rojo al index 0)
+        # BOTÓN PARA VOLVER A REGISTRO
         if st.button("⬅️ Ir a Registro"):
-            st.session_state.paso_despacho = 0
+            st.session_state.paso_idx = 0
             st.rerun()
 
         st.subheader("🚀 Nueva Salida de Equipo")
@@ -159,14 +160,14 @@ elif menu == "👥 Clientes/Despacho":
                     
                     st.success(f"Salida de {l_sel} registrada con éxito.")
 
-                    # Lógica WhatsApp
+                    # WhatsApp Link
                     tel_limpio = "".join(filter(str.isdigit, str(telefono)))
-                    texto_msg = f"Hola {c_sel}, su servicio de lavandería ha iniciado. Equipo: {l_sel}. Entrega: {f_fin.strftime('%H:%M')}."
+                    texto_msg = f" {c_sel}, ✅ *¡Hola, DAMAIRA !* Tu lavadora ya salió. Repartidor: *REPARTIDOR*. . Equipo: {l_sel}. Entrega: {f_fin.strftime('%H:%M')}."
                     wa_url = f"https://wa.me/{tel_limpio}?text={texto_msg.replace(' ', '%20')}"
                     
                     st.markdown(f"""
                         <a href="{wa_url}" target="_blank" style="text-decoration: none;">
-                            <div style="background-color: #25D366; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; cursor: pointer; border: 1px solid #128C7E; margin-top: 20px;">
+                            <div style="background-color: #25D366; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; cursor: pointer; margin-top: 20px;">
                                 Enviar WhatsApp a {c_sel} 📲
                             </div>
                         </a>
@@ -235,3 +236,4 @@ elif menu == "⚙️ Configuración":
                 conn.commit()
                 st.success("Base de datos vaciada.")
                 st.rerun()
+                
