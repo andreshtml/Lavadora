@@ -27,15 +27,14 @@ def inicializar_db():
 
 inicializar_db()
 
-# --- GESTIÓN DE ESTADO DE NAVEGACIÓN ---
+# --- GESTIÓN DE NAVEGACIÓN Y LIMPIEZA ---
 if 'radio_despacho' not in st.session_state:
     st.session_state.radio_despacho = "Registro"
 
-def cambiar_a_registro():
+def reset_despacho():
+    """Limpia los campos de despacho forzando el reinicio del formulario"""
     st.session_state.radio_despacho = "Registro"
-
-def cambiar_a_despacho():
-    st.session_state.radio_despacho = "Despacho"
+    st.rerun()
 
 # --- AUTENTICACIÓN ---
 if 'auth' not in st.session_state: st.session_state['auth'] = False
@@ -57,7 +56,7 @@ user_active = st.session_state['user']
 
 # --- MENÚ LATERAL ---
 st.sidebar.title(f"👤 {user_active}")
-menu = st.sidebar.selectbox("Menú Principal", ["🧺 Inventario Equipos", "👥 Clientes y Despacho", "⏱️ Control de Tiempos", "🚚 Logística Bodega", "📊 Reporte Admin"])
+menu = st.sidebar.selectbox("Menú Principal", ["👥 Clientes y Despacho", "🧺 Inventario Equipos", "⏱️ Control de Tiempos", "🚚 Logística Bodega", "📊 Reporte Admin"])
 
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state['auth'] = False
@@ -67,7 +66,6 @@ if st.sidebar.button("Cerrar Sesión"):
 if menu == "👥 Clientes y Despacho":
     st.title("👥 Gestión de Clientes y Salida")
 
-    # Radio con el estado controlado por session_state
     opcion = st.radio("Seleccione Acción:", ["Registro", "Despacho"], 
                       key="radio_despacho", 
                       horizontal=True)
@@ -79,9 +77,7 @@ if menu == "👥 Clientes y Despacho":
             tel = st.text_input("WhatsApp (Ej: 58412...)")
             gps = st.text_input("Link Ubicación WhatsApp")
             nota = st.text_area("Notas de Dirección")
-            enviar_reg = st.form_submit_button("Guardar Cliente y Ir a Despacho")
-
-            if enviar_reg:
+            if st.form_submit_button("Guardar y Ir a Despacho"):
                 if nom and tel:
                     lat, lon = 0.0, 0.0
                     coords = re.findall(r"([-+]?\d*\.\d+|\d+)", gps)
@@ -89,81 +85,74 @@ if menu == "👥 Clientes y Despacho":
                     c.execute("INSERT INTO clientes (nombre, tel, lat, lon, notas, fecha_registro) VALUES (?,?,?,?,?,?)",
                              (nom, tel, lat, lon, nota, datetime.now()))
                     conn.commit()
-                    st.toast("✅ Cliente guardado")
-                    # Cambiamos el estado y forzamos reinicio para que el radio se actualice
                     st.session_state.radio_despacho = "Despacho"
                     st.rerun()
-                else:
-                    st.error("Nombre y Teléfono requeridos")
+                else: st.error("Faltan datos")
 
     elif opcion == "Despacho":
         st.subheader("🚀 Despacho de Equipos")
         
-        # Botón para volver que limpia el estado correctamente
-        if st.button("⬅️ Volver a Registro", on_click=cambiar_a_registro):
-            st.rerun()
+        if st.button("⬅️ Volver a Registro"):
+            reset_despacho()
 
         df_c = pd.read_sql_query("SELECT id, nombre, tel FROM clientes ORDER BY id DESC", conn)
         df_l = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Disponible'", conn)
         df_r = pd.read_sql_query("SELECT usuario FROM usuarios WHERE rol='Repartidor'", conn)
 
         if not df_c.empty and not df_l.empty:
-            # Usamos un formulario para asegurar la limpieza de los inputs al enviar
-            with st.form("form_salida", clear_on_submit=True):
+            # clear_on_submit asegura que tras el botón los widgets internos se vacíen
+            with st.form("form_despacho_final", clear_on_submit=True):
                 col1, col2 = st.columns(2)
-                c_sel = col1.selectbox("👤 Seleccionar Cliente", df_c['nombre'])
-                l_sel = col1.selectbox("🧺 Seleccionar Lavadora", df_l['serie'])
-                rep_sel = col2.selectbox("🚚 Asignar Repartidor", df_r['usuario'])
-                hrs = col2.number_input("Horas de Alquiler", min_value=1, value=4)
-                
-                btn_confirmar = st.form_submit_button("🚀 Confirmar Salida y Generar Link")
+                c_sel = col1.selectbox("👤 Cliente", df_c['nombre'])
+                l_sel = col1.selectbox("🧺 Lavadora", df_l['serie'])
+                rep_sel = col2.selectbox("🚚 Repartidor", df_r['usuario'])
+                hrs = col2.number_input("Horas", min_value=1, value=4)
+                confirmar = st.form_submit_button("🚀 Confirmar Salida")
 
-            if btn_confirmar:
+            if confirmar:
                 row_c = df_c[df_c['nombre'] == c_sel].iloc[0]
                 id_l = df_l[df_l['serie'] == l_sel]['id'].values[0]
-                f_ini = datetime.now()
-                f_fin = f_ini + timedelta(hours=hrs)
-
+                
                 c.execute("INSERT INTO alquileres_activos (id_cliente, id_lavadora, inicio, fin, repartidor_asig) VALUES (?,?,?,?,?)",
-                         (row_c['id'], id_l, f_ini, f_fin, rep_sel))
+                         (row_c['id'], id_l, datetime.now(), datetime.now() + timedelta(hours=hrs), rep_sel))
                 c.execute("UPDATE lavadoras SET estado='En Camino' WHERE id=?", (id_l,))
                 conn.commit()
 
                 msg = f"✅ *¡Hola, {c_sel.upper()}!* \n\nTu lavadora ya salió. Repartidor: *{rep_sel.upper()}*."
                 url_wa = f"https://wa.me/{row_c['tel']}?text={msg.replace(' ', '%20')}"
                 
-                st.success(f"Despacho procesado para {c_sel}")
+                st.success("¡Despacho registrado!")
                 st.link_button("📲 Enviar WhatsApp", url_wa)
                 
-                # Botón opcional para refrescar la lista de lavadoras disponibles
-                if st.button("Hacer otro despacho"):
+                # Botón de limpieza manual post-envío
+                if st.button("Limpiar y Nuevo Despacho"):
                     st.rerun()
         else:
-            st.warning("Asegúrese de tener clientes registrados y lavadoras con estado 'Disponible'.")
+            st.warning("No hay equipos disponibles o clientes registrados.")
 
-# --- MANTENIMIENTO DE OTROS MÓDULOS (SIMPLIFICADO) ---
+# --- OTROS MÓDULOS ---
 elif menu == "🧺 Inventario Equipos":
-    st.title("🧺 Inventario")
-    with st.form("add_lav"):
+    st.title("🧺 Gestión de Inventario")
+    with st.form("inv", clear_on_submit=True):
         s = st.text_input("Serie")
         m = st.text_input("Modelo")
-        if st.form_submit_button("Añadir"):
+        if st.form_submit_button("Registrar"):
             c.execute("INSERT INTO lavadoras (serie, modelo, estado) VALUES (?,?,'Disponible')", (s,m))
             conn.commit()
             st.rerun()
-    st.dataframe(pd.read_sql_query("SELECT * FROM lavadoras", conn))
+    st.dataframe(pd.read_sql_query("SELECT serie, modelo, estado FROM lavadoras", conn), use_container_width=True)
 
 elif menu == "⏱️ Control de Tiempos":
-    st.title("⏱️ Monitor")
+    st.title("⏱️ Monitor de Alquileres")
     activos = pd.read_sql_query('''SELECT a.id, c.nombre, l.serie, a.fin FROM alquileres_activos a 
                                    JOIN clientes c ON a.id_cliente = c.id 
                                    JOIN lavadoras l ON a.id_lavadora = l.id''', conn)
-    st.table(activos)
+    if activos.empty: st.info("Sin alquileres activos.")
+    else: st.dataframe(activos, use_container_width=True)
 
 elif menu == "📊 Reporte Admin":
     if rol_actual == "Admin":
-        st.title("📊 Ventas")
-        st.dataframe(pd.read_sql_query("SELECT * FROM historial_alquileres", conn))
-    else:
-        st.error("No tienes permisos.")
+        st.title("📊 Historial de Ventas")
+        st.dataframe(pd.read_sql_query("SELECT * FROM historial_alquileres", conn), use_container_width=True)
+    else: st.error("Acceso restringido.")
         
