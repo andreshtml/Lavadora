@@ -8,12 +8,11 @@ from contextlib import contextmanager
 # --- CONFIGURACIÓN ESTÉTICA ---
 st.set_page_config(page_title="Lavandería Master Pro v5.0", layout="wide", page_icon="🧺")
 
-# --- GESTIÓN ROBUSTA DE BASE DE DATOS ---
+# --- GESTIÓN DE BASE DE DATOS ---
 DB_NAME = 'sistema_lavanderia_v4.db'
 
 @contextmanager
 def db_connection():
-    """Gestiona la conexión de forma segura."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
@@ -38,11 +37,11 @@ def inicializar_db():
 
 inicializar_db()
 
-# --- ESTADOS DE SESIÓN ---
-if 'paso_idx' not in st.session_state:
-    st.session_state.paso_idx = 0  # 0 es Registro, 1 es Despacho
+# --- ESTADOS DE SESIÓN (Control de Navegación) ---
 if 'auth' not in st.session_state: 
     st.session_state['auth'] = False
+if 'paso_idx' not in st.session_state:
+    st.session_state.paso_idx = 0  # 0: Registro, 1: Despacho
 
 # --- AUTENTICACIÓN ---
 if not st.session_state['auth']:
@@ -68,10 +67,11 @@ if st.session_state['rol'] == "Admin":
 menu = st.sidebar.selectbox("Menú Principal", opciones_menu)
 
 if st.sidebar.button("Cerrar Sesión"):
-    st.session_state['auth'] = False
+    st.session_state.clear()
     st.rerun()
 
-# --- MÓDULO 0: INVENTARIO ---
+# --- LÓGICA DE MÓDULOS ---
+
 if menu == "🧺 Equipos":
     st.title("🧺 Gestión de Inventario")
     with st.form("reg_lav", clear_on_submit=True):
@@ -90,29 +90,30 @@ if menu == "🧺 Equipos":
         df = pd.read_sql_query("SELECT serie, modelo, estado FROM lavadoras", conn)
         st.dataframe(df, use_container_width=True)
 
-# --- MÓDULO 1: CLIENTES Y DESPACHO ---
 elif menu == "👥 Clientes/Despacho":
     st.title("👥 Clientes y Salidas")
     
-    # El radio button se controla mediante el índice almacenado en session_state
-    opcion = st.radio(
+    # Selector de pestañas sincronizado con st.session_state.paso_idx
+    paso = st.radio(
         "Acción:", 
         ["Registro", "Despacho"], 
         index=st.session_state.paso_idx, 
         horizontal=True,
-        key="radio_nav"
+        key="radio_navegacion" 
     )
 
-    # Si el usuario cambia manualmente el radio, actualizamos el índice
-    st.session_state.paso_idx = 0 if opcion == "Registro" else 1
+    # Actualizamos el estado interno si el usuario hace click manualmente
+    st.session_state.paso_idx = 0 if paso == "Registro" else 1
 
+    # --- PESTAÑA REGISTRO ---
     if st.session_state.paso_idx == 0:
         with st.form("cli_form", clear_on_submit=True):
             st.subheader("📝 Nuevo Registro")
             nom = st.text_input("Nombre Completo")
-            tel = st.text_input("WhatsApp (Incluir código de país)")
+            tel = st.text_input("WhatsApp (Ej: 573001234567)")
             gps = st.text_input("Link Ubicación")
             notas = st.text_area("Notas")
+            
             if st.form_submit_button("Guardar y Continuar al Despacho"):
                 if nom and tel:
                     coords = re.findall(r"([-+]?\d+\.\d+)", gps)
@@ -123,14 +124,16 @@ elif menu == "👥 Clientes/Despacho":
                                      (nom, tel, lat, lon, notas, datetime.now()))
                         conn.commit()
                     
-                    # CAMBIO AUTOMÁTICO A DESPACHO
+                    # AQUÍ ESTÁ EL TRUCO: Cambiamos el índice y recargamos
                     st.session_state.paso_idx = 1
                     st.rerun()
-                else: st.error("Nombre y Teléfono requeridos.")
+                else:
+                    st.error("Nombre y Teléfono son obligatorios.")
 
+    # --- PESTAÑA DESPACHO ---
     else:
         # BOTÓN PARA VOLVER A REGISTRO
-        if st.button("⬅️ Ir a Registro"):
+        if st.button("⬅️ Volver a Nuevo Registro"):
             st.session_state.paso_idx = 0
             st.rerun()
 
@@ -141,14 +144,15 @@ elif menu == "👥 Clientes/Despacho":
         
         if not clientes_df.empty and not lavadoras_df.empty:
             with st.form("despacho_form"):
-                c_sel = st.selectbox("Cliente", clientes_df['nombre'])
-                l_sel = st.selectbox("Lavadora", lavadoras_df['serie'])
+                c_sel = st.selectbox("Seleccionar Cliente", clientes_df['nombre'])
+                l_sel = st.selectbox("Seleccionar Lavadora", lavadoras_df['serie'])
                 hrs = st.number_input("Horas de alquiler", 1, 72, 4)
                 
                 if st.form_submit_button("Confirmar Salida"):
-                    cliente_info = clientes_df[clientes_df['nombre'] == c_sel].iloc[0]
-                    id_c = cliente_info['id']
-                    telefono = cliente_info['tel']
+                    # Extraer datos
+                    c_data = clientes_df[clientes_df['nombre'] == c_sel].iloc[0]
+                    id_c = c_data['id']
+                    telefono = c_data['tel']
                     id_l = lavadoras_df[lavadoras_df['serie'] == l_sel]['id'].values[0]
                     f_fin = datetime.now() + timedelta(hours=hrs)
                     
@@ -158,27 +162,23 @@ elif menu == "👥 Clientes/Despacho":
                         conn.execute("UPDATE lavadoras SET estado='En Uso' WHERE id=?", (id_l,))
                         conn.commit()
                     
-                    st.success(f"Salida de {l_sel} registrada con éxito.")
+                    st.success(f"Salida registrada para {c_sel}")
 
-                    # WhatsApp Link
+                    # Botón WhatsApp
                     tel_limpio = "".join(filter(str.isdigit, str(telefono)))
-                    texto_msg = f"Hola {c_sel}, su servicio de lavandería ha iniciado. Equipo: {l_sel}. Entrega: {f_fin.strftime('%H:%M')}."
-                    wa_url = f"https://wa.me/{tel_limpio}?text={texto_msg.replace(' ', '%20')}"
+                    msg = f"Hola {c_sel}, tu servicio inició. Equipo: {l_sel}. Vence: {f_fin.strftime('%H:%M')}."
+                    wa_url = f"https://wa.me/{tel_limpio}?text={msg.replace(' ', '%20')}"
                     
                     st.markdown(f"""
                         <a href="{wa_url}" target="_blank" style="text-decoration: none;">
-                            <div style="background-color: #25D366; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; cursor: pointer; margin-top: 20px;">
-                                Enviar WhatsApp a {c_sel} 📲
+                            <div style="background-color: #25D366; color: white; padding: 12px; border-radius: 8px; text-align: center; font-weight: bold; margin-top: 10px;">
+                                Enviar Comprobante WhatsApp 📲
                             </div>
                         </a>
                     """, unsafe_allow_html=True)
-
-        elif clientes_df.empty:
-            st.warning("No hay clientes registrados.")
         else:
-            st.warning("No hay equipos disponibles.")
+            st.info("Asegúrese de tener clientes registrados y lavadoras 'Disponibles'.")
 
-# --- MÓDULO 2: MONITOR ---
 elif menu == "⏱️ Monitor":
     st.title("⏱️ Monitor en Tiempo Real")
     query = '''SELECT a.id, c.nombre, l.serie, l.id as lid, a.fin FROM alquileres_activos a 
@@ -193,8 +193,8 @@ elif menu == "⏱️ Monitor":
             with st.container(border=True):
                 col1, col2, col3 = st.columns([2,2,1])
                 col1.write(f"**{row['nombre']}** ({row['serie']})")
-                col2.write(f"Fin: {row['fin']}")
-                if col3.button("Finalizar", key=f"btn_{row['id']}"):
+                col2.write(f"Vence: {row['fin']}")
+                if col3.button("Finalizar", key=f"fin_{row['id']}"):
                     with db_connection() as conn:
                         conn.execute("INSERT INTO historial_alquileres (id_cliente, id_lavadora, fecha, monto, usuario_cobro) VALUES (?,?,?,?,?)",
                                      (row['id'], row['lid'], datetime.now(), 0.0, st.session_state['user']))
@@ -203,37 +203,36 @@ elif menu == "⏱️ Monitor":
                         conn.commit()
                     st.rerun()
 
-# --- MÓDULO 3: RECEPCIÓN ---
 elif menu == "🚚 Recepción":
     st.title("📥 Reingreso a Bodega")
     with db_connection() as conn:
         df = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Retornando'", conn)
+    
+    if df.empty:
+        st.info("No hay equipos pendientes de reingreso.")
+    
     for _, l in df.iterrows():
-        if st.button(f"📥 Bodega: {l['serie']}", key=f"rec_{l['id']}", use_container_width=True):
+        if st.button(f"📥 Confirmar Bodega: {l['serie']}", key=f"rec_{l['id']}", use_container_width=True):
             with db_connection() as conn:
                 conn.execute("UPDATE lavadoras SET estado='Disponible' WHERE id=?", (l['id'],))
                 conn.commit()
             st.rerun()
 
-# --- MÓDULO 4: REPORTES ---
 elif menu == "📊 Reportes":
     st.title("📊 Reportes de Historial")
     with db_connection() as conn:
         df = pd.read_sql_query("SELECT * FROM historial_alquileres", conn)
     st.dataframe(df, use_container_width=True)
 
-# --- MÓDULO 5: CONFIGURACIÓN ---
 elif menu == "⚙️ Configuración":
-    st.title("⚙️ Configuración de Sistema")
-    with st.container(border=True):
-        st.warning("Zona de Peligro: Borrado de Base de Datos")
-        if st.button("🔥 EJECUTAR BORRADO TOTAL", type="primary"):
-            with db_connection() as conn:
-                conn.execute("DELETE FROM alquileres_activos")
-                conn.execute("DELETE FROM historial_alquileres")
-                conn.execute("DELETE FROM lavadoras")
-                conn.execute("DELETE FROM clientes")
-                conn.commit()
-                st.success("Base de datos vaciada.")
-                st.rerun()
-                    
+    st.title("⚙️ Configuración")
+    if st.button("🔥 BORRAR TODA LA DATA", type="primary"):
+        with db_connection() as conn:
+            conn.execute("DELETE FROM alquileres_activos")
+            conn.execute("DELETE FROM historial_alquileres")
+            conn.execute("DELETE FROM lavadoras")
+            conn.execute("DELETE FROM clientes")
+            conn.commit()
+        st.success("Sistema reseteado.")
+        st.rerun()
+                                             
