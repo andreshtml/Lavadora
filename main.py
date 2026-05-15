@@ -233,3 +233,4 @@ elif menu == "⚙️ Configuración":
         conn.commit()
         st.success("Base de datos reseteada.")
         st.rerun()
+    
