@@ -99,7 +99,7 @@ elif menu == "👥 Clientes/Despacho":
         with st.form("cli_form", clear_on_submit=True):
             st.subheader("📝 Nuevo Registro")
             nom = st.text_input("Nombre Completo")
-            tel = st.text_input("WhatsApp")
+            tel = st.text_input("WhatsApp (Ej: 573001234567)")
             gps = st.text_input("Link Ubicación")
             notas = st.text_area("Notas")
             if st.form_submit_button("Guardar y Continuar"):
@@ -125,20 +125,55 @@ elif menu == "👥 Clientes/Despacho":
             with st.form("despacho_form"):
                 c_sel = st.selectbox("Cliente", clientes_df['nombre'])
                 l_sel = st.selectbox("Lavadora", lavadoras_df['serie'])
-                hrs = st.number_input("Horas", 1, 72, 4)
+                hrs = st.number_input("Horas de alquiler", 1, 72, 4)
                 
                 if st.form_submit_button("Confirmar Salida"):
+                    # Obtener datos del cliente y lavadora
                     cliente_data = clientes_df[clientes_df['nombre'] == c_sel].iloc[0]
                     id_c = cliente_data['id']
+                    telefono = cliente_data['tel']
                     id_l = lavadoras_df[lavadoras_df['serie'] == l_sel]['id'].values[0]
-                    f_fin = datetime.now() + timedelta(hours=hrs)
                     
+                    f_inicio = datetime.now()
+                    f_fin = f_inicio + timedelta(hours=hrs)
+                    
+                    # Guardar en DB
                     with db_connection() as conn:
                         conn.execute("INSERT INTO alquileres_activos (id_cliente, id_lavadora, inicio, fin) VALUES (?,?,?,?)",
-                                     (id_c, id_l, datetime.now(), f_fin))
+                                     (id_c, id_l, f_inicio, f_fin))
                         conn.execute("UPDATE lavadoras SET estado='En Uso' WHERE id=?", (id_l,))
                         conn.commit()
-                    st.rerun()
+                    
+                    # Lógica de WhatsApp
+                    msg = f"🧺 *LAVANDERÍA MASTER PRO*\n\nHola {c_sel}, su equipo *{l_sel}* ha salido a despacho.\n\n⏰ *Inicio:* {f_inicio.strftime('%d/%m %H:%M')}\n⏳ *Tiempo:* {hrs} horas\n🏁 *Retorno:* {f_fin.strftime('%d/%m %H:%M')}"
+                    tel_clean = "".join(filter(str.isdigit, str(telefono)))
+                    wa_url = f"https://wa.me/{tel_clean}?text={msg.replace(' ', '%20').replace('*', '%2A')}"
+                    
+                    st.success(f"✅ Salida registrada para {c_sel}")
+                    
+                    # Botón de WhatsApp estilizado
+                    st.markdown(f"""
+                        <a href="{wa_url}" target="_blank">
+                            <button style="
+                                background-color: #25D366;
+                                color: white;
+                                border: none;
+                                padding: 12px 24px;
+                                border-radius: 8px;
+                                cursor: pointer;
+                                font-weight: bold;
+                                font-size: 16px;
+                                width: 100%;
+                                margin-top: 10px;">
+                                📱 Enviar Notificación WhatsApp
+                            </button>
+                        </a>
+                    """, unsafe_allow_html=True)
+                    
+        elif clientes_df.empty:
+            st.warning("Primero debe registrar un cliente.")
+        else:
+            st.warning("No hay lavadoras disponibles en inventario.")
 
 # --- MÓDULO 2: MONITOR ---
 elif menu == "⏱️ Monitor":
@@ -155,7 +190,7 @@ elif menu == "⏱️ Monitor":
             with st.container(border=True):
                 col1, col2, col3 = st.columns([2,2,1])
                 col1.write(f"**{row['nombre']}** ({row['serie']})")
-                col2.write(f"Fin: {row['fin']}")
+                col2.write(f"Fin estimado: {row['fin']}")
                 if col3.button("Finalizar", key=f"btn_{row['id']}"):
                     with db_connection() as conn:
                         conn.execute("INSERT INTO historial_alquileres (id_cliente, id_lavadora, fecha, monto, usuario_cobro) VALUES (?,?,?,?,?)",
@@ -167,11 +202,15 @@ elif menu == "⏱️ Monitor":
 
 # --- MÓDULO 3: RECEPCIÓN ---
 elif menu == "🚚 Recepción":
-    st.title("📥 Reingreso")
+    st.title("📥 Reingreso a Bodega")
     with db_connection() as conn:
         df = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Retornando'", conn)
+    
+    if df.empty:
+        st.info("No hay equipos pendientes de reingreso.")
+    
     for _, l in df.iterrows():
-        if st.button(f"📥 Bodega: {l['serie']}", key=f"rec_{l['id']}"):
+        if st.button(f"📥 Confirmar Entrada Bodega: {l['serie']}", key=f"rec_{l['id']}", use_container_width=True):
             with db_connection() as conn:
                 conn.execute("UPDATE lavadoras SET estado='Disponible' WHERE id=?", (l['id'],))
                 conn.commit()
@@ -179,12 +218,15 @@ elif menu == "🚚 Recepción":
 
 # --- MÓDULO 4: REPORTES ---
 elif menu == "📊 Reportes":
-    st.title("📊 Reporte")
+    st.title("📊 Historial de Alquileres")
     with db_connection() as conn:
-        df = pd.read_sql_query("SELECT * FROM historial_alquileres", conn)
+        df = pd.read_sql_query('''SELECT h.fecha, c.nombre, l.serie, h.usuario_cobro 
+                                  FROM historial_alquileres h
+                                  JOIN clientes c ON h.id_cliente = c.id
+                                  JOIN lavadoras l ON h.id_lavadora = l.id''', conn)
     st.dataframe(df, use_container_width=True)
 
-# --- MÓDULO 5: CONFIGURACIÓN (ELIMINACIÓN TOTAL) ---
+# --- MÓDULO 5: CONFIGURACIÓN ---
 elif menu == "⚙️ Configuración":
     st.title("⚙️ Configuración de Sistema")
     st.markdown("---")
@@ -192,31 +234,22 @@ elif menu == "⚙️ Configuración":
     
     with st.container(border=True):
         st.warning("Esta acción borrará **TODOS** los clientes, lavadoras, alquileres e historial.")
-        st.info("Nota: Las cuentas de usuario no se verán afectadas.")
-        
-        check_confirm = st.checkbox("Entiendo que esto es irreversible y deseo continuar.")
+        check_confirm = st.checkbox("Entiendo que esto es irreversible.")
         clave_borrado = st.text_input("Escriba la frase de seguridad: **BORRAR**")
         
-        # El botón solo se activa si se cumplen ambas condiciones
         if st.button("🔥 EJECUTAR BORRADO TOTAL", 
                      type="primary", 
                      disabled=not (check_confirm and clave_borrado == "BORRAR"),
                      use_container_width=True):
             
-            # Ejecución directa del borrado
             with db_connection() as conn:
                 cursor = conn.cursor()
-                try:
-                    # Limpiamos las tablas principales
-                    cursor.execute("DELETE FROM alquileres_activos")
-                    cursor.execute("DELETE FROM historial_alquileres")
-                    cursor.execute("DELETE FROM lavadoras")
-                    cursor.execute("DELETE FROM clientes")
-                    conn.commit()
-                    
-                    st.success("✅ ¡Base de datos vaciada con éxito!")
-                    time.sleep(1.5)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al intentar borrar los datos: {e}")
-                    
+                cursor.execute("DELETE FROM alquileres_activos")
+                cursor.execute("DELETE FROM historial_alquileres")
+                cursor.execute("DELETE FROM lavadoras")
+                cursor.execute("DELETE FROM clientes")
+                conn.commit()
+                st.success("✅ Base de datos vaciada.")
+                time.sleep(1)
+                st.rerun()
+        
