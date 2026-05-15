@@ -13,7 +13,6 @@ DB_NAME = 'sistema_lavanderia_v4.db'
 
 @contextmanager
 def db_connection():
-    """Gestiona la conexión de forma segura."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
@@ -39,8 +38,8 @@ def inicializar_db():
 inicializar_db()
 
 # --- ESTADOS DE SESIÓN ---
-if 'paso_despacho' not in st.session_state: st.session_state.paso_despacho = 0
 if 'auth' not in st.session_state: st.session_state['auth'] = False
+if 'paso_despacho' not in st.session_state: st.session_state.paso_despacho = "Registro"
 
 # --- AUTENTICACIÓN ---
 if not st.session_state['auth']:
@@ -92,21 +91,17 @@ if menu == "🧺 Equipos":
 elif menu == "👥 Clientes/Despacho":
     st.title("👥 Clientes y Salidas")
     
-    # Sincronización del radio button con el estado de la sesión
-    opcion = st.radio("Acción:", ["Registro", "Despacho"], index=st.session_state.paso_despacho, horizontal=True)
-    
-    # Actualizar estado basado en la elección manual del radio
-    if opcion == "Registro": st.session_state.paso_despacho = 0
-    else: st.session_state.paso_despacho = 1
+    # El radio button ahora se controla por session_state
+    opcion = st.radio("Acción:", ["Registro", "Despacho"], key="paso_despacho", horizontal=True)
 
-    if st.session_state.paso_despacho == 0:
+    if opcion == "Registro":
         with st.form("cli_form", clear_on_submit=True):
             st.subheader("📝 Nuevo Registro")
             nom = st.text_input("Nombre Completo")
             tel = st.text_input("WhatsApp (Incluir código de país)")
             gps = st.text_input("Link Ubicación")
             notas = st.text_area("Notas")
-            if st.form_submit_button("Guardar y Continuar"):
+            if st.form_submit_button("Guardar y Continuar al Despacho"):
                 if nom and tel:
                     coords = re.findall(r"([-+]?\d+\.\d+)", gps)
                     lat = float(coords[0]) if len(coords) >= 2 else 0.0
@@ -115,14 +110,15 @@ elif menu == "👥 Clientes/Despacho":
                         conn.execute("INSERT INTO clientes (nombre, tel, lat, lon, notas, fecha_registro) VALUES (?,?,?,?,?,?)",
                                      (nom, tel, lat, lon, notas, datetime.now()))
                         conn.commit()
-                    st.session_state.paso_despacho = 1
+                    # Cambiamos el estado para que al recargar vaya a Despacho
+                    st.session_state.paso_despacho = "Despacho"
                     st.rerun()
                 else: st.error("Nombre y Teléfono requeridos.")
 
-    else:
-        # --- BOTÓN PARA VOLVER A REGISTRO ---
-        if st.button("⬅️ Ir a Registro (Nuevo Cliente)"):
-            st.session_state.paso_despacho = 0
+    elif opcion == "Despacho":
+        # --- NUEVO BOTÓN PARA VOLVER A REGISTRO ---
+        if st.button("⬅️ Ir a Registro"):
+            st.session_state.paso_despacho = "Registro"
             st.rerun()
 
         st.subheader("🚀 Nueva Salida de Equipo")
@@ -151,23 +147,22 @@ elif menu == "👥 Clientes/Despacho":
                     
                     st.success(f"Salida de {l_sel} registrada con éxito.")
 
-                    # Lógica WhatsApp
                     tel_limpio = "".join(filter(str.isdigit, str(telefono)))
-                    texto_msg = f"Hola {c_sel}, su servicio de lavandería ha iniciado. Equipo: {l_sel}. Entrega estimada: {f_fin.strftime('%H:%M')}."
+                    texto_msg = f"Hola {c_sel}, su servicio de lavandería ha iniciado. Equipo: {l_sel}. Entrega: {f_fin.strftime('%H:%M')}."
                     wa_url = f"https://wa.me/{tel_limpio}?text={texto_msg.replace(' ', '%20')}"
                     
                     st.markdown(f"""
                         <a href="{wa_url}" target="_blank" style="text-decoration: none;">
-                            <div style="background-color: #25D366; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; cursor: pointer; border: 1px solid #128C7E; margin-top: 20px;">
+                            <div style="background-color: #25D366; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; margin-top: 20px;">
                                 Enviar WhatsApp a {c_sel} 📲
                             </div>
                         </a>
                     """, unsafe_allow_html=True)
 
         elif clientes_df.empty:
-            st.warning("No hay clientes registrados en la base de datos.")
+            st.warning("No hay clientes registrados.")
         else:
-            st.warning("No hay equipos disponibles para despacho.")
+            st.warning("No hay equipos disponibles.")
 
 # --- MÓDULO 2: MONITOR ---
 elif menu == "⏱️ Monitor":
@@ -199,8 +194,6 @@ elif menu == "🚚 Recepción":
     st.title("📥 Reingreso a Bodega")
     with db_connection() as conn:
         df = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Retornando'", conn)
-    if df.empty:
-        st.info("No hay equipos pendientes de retorno.")
     for _, l in df.iterrows():
         if st.button(f"📥 Bodega: {l['serie']}", key=f"rec_{l['id']}", use_container_width=True):
             with db_connection() as conn:
@@ -229,4 +222,3 @@ elif menu == "⚙️ Configuración":
                 conn.commit()
                 st.success("Base de datos vaciada.")
                 st.rerun()
-    
