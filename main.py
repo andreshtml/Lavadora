@@ -91,7 +91,6 @@ if menu == "🧺 Inventario Equipos":
 elif menu == "👥 Clientes y Despacho":
     st.title("👥 Gestión de Clientes y Salida")
 
-    # Radio vinculado al session_state
     opcion = st.radio("Seleccione Acción:", ["Registro", "Despacho"], 
                       key="radio_despacho",
                       horizontal=True)
@@ -109,9 +108,9 @@ elif menu == "👥 Clientes y Despacho":
                          (nom, tel, lat, lon, st.session_state.c_nota, datetime.now()))
                 conn.commit()
                 
-                # Cambiamos el estado para saltar a Despacho
+                # Redirección automática al registrar
                 st.session_state.radio_despacho = "Despacho"
-                st.toast(f"✅ Cliente {nom} registrado")
+                st.toast(f"✅ Cliente {nom} registrado. Redirigiendo a despacho...")
                 time.sleep(0.5)
                 st.rerun()
             else: st.error("Nombre y Teléfono requeridos")
@@ -124,13 +123,9 @@ elif menu == "👥 Clientes y Despacho":
             st.text_area("Notas de Dirección", key="c_nota")
             st.form_submit_button("Guardar Cliente y Continuar", on_click=procesar_cliente)
 
-    elif opcion == "Despacho":
+    else:
+        # Se ha eliminado el botón de "Volver a Registro" de esta sección
         st.subheader("🚀 Despacho de Equipos")
-        
-        # FUNCIONALIDAD SOLICITADA: Botón para volver a Registro de forma efectiva
-        if st.button("⬅️ Volver a Registro de Clientes"):
-            st.session_state.radio_despacho = "Registro"
-            st.rerun()
 
         df_c = pd.read_sql_query("SELECT id, nombre, tel FROM clientes ORDER BY id DESC", conn)
         df_l = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Disponible'", conn)
@@ -205,11 +200,8 @@ elif menu == "📊 Reporte Admin":
     if rol_actual != "Admin": st.error("Acceso denegado"); st.stop()
     st.title("📊 Resumen de Ventas")
     df_h = pd.read_sql_query("SELECT * FROM historial_alquileres", conn)
-    if not df_h.empty:
-        st.metric("Total Recaudado", f"${df_h['monto'].sum():,.2f}")
-        st.dataframe(df_h)
-    else:
-        st.info("No hay historial de ventas.")
+    st.metric("Total Recaudado", f"${df_h['monto'].sum():,.2f}")
+    st.dataframe(df_h)
 
 # --- MÓDULO 5: CONFIGURACIÓN ---
 elif menu == "⚙️ Configuración":
@@ -218,4 +210,4 @@ elif menu == "⚙️ Configuración":
     if st.button("RESET TOTAL") and confirm == "BORRAR":
         c.execute("DELETE FROM clientes"); c.execute("DELETE FROM alquileres_activos")
         c.execute("DELETE FROM lavadoras"); conn.commit(); st.rerun()
-    
+            
