@@ -1,8 +1,9 @@
-import streamlit as st
+Import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime, timedelta
 import re
+import time
 from contextlib import contextmanager
 
 # --- CONFIGURACIÓN ESTÉTICA ---
@@ -13,6 +14,7 @@ DB_NAME = 'sistema_lavanderia_v4.db'
 
 @contextmanager
 def db_connection():
+    """Gestiona la conexión de forma segura."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
@@ -38,8 +40,8 @@ def inicializar_db():
 inicializar_db()
 
 # --- ESTADOS DE SESIÓN ---
+if 'paso_despacho' not in st.session_state: st.session_state.paso_despacho = 0
 if 'auth' not in st.session_state: st.session_state['auth'] = False
-if 'paso_despacho' not in st.session_state: st.session_state.paso_despacho = "Registro"
 
 # --- AUTENTICACIÓN ---
 if not st.session_state['auth']:
@@ -90,18 +92,17 @@ if menu == "🧺 Equipos":
 # --- MÓDULO 1: CLIENTES Y DESPACHO ---
 elif menu == "👥 Clientes/Despacho":
     st.title("👥 Clientes y Salidas")
-    
-    # El radio button ahora se controla por session_state
-    opcion = st.radio("Acción:", ["Registro", "Despacho"], key="paso_despacho", horizontal=True)
+    opcion = st.radio("Acción:", ["Registro", "Despacho"], index=st.session_state.paso_despacho, horizontal=True)
+    st.session_state.paso_despacho = 0 if opcion == "Registro" else 1
 
-    if opcion == "Registro":
+    if st.session_state.paso_despacho == 0:
         with st.form("cli_form", clear_on_submit=True):
             st.subheader("📝 Nuevo Registro")
             nom = st.text_input("Nombre Completo")
             tel = st.text_input("WhatsApp (Incluir código de país)")
             gps = st.text_input("Link Ubicación")
             notas = st.text_area("Notas")
-            if st.form_submit_button("Guardar y Continuar al Despacho"):
+            if st.form_submit_button("Guardar y Continuar"):
                 if nom and tel:
                     coords = re.findall(r"([-+]?\d+\.\d+)", gps)
                     lat = float(coords[0]) if len(coords) >= 2 else 0.0
@@ -110,17 +111,11 @@ elif menu == "👥 Clientes/Despacho":
                         conn.execute("INSERT INTO clientes (nombre, tel, lat, lon, notas, fecha_registro) VALUES (?,?,?,?,?,?)",
                                      (nom, tel, lat, lon, notas, datetime.now()))
                         conn.commit()
-                    # Cambiamos el estado para que al recargar vaya a Despacho
-                    st.session_state.paso_despacho = "Despacho"
+                    st.session_state.paso_despacho = 1
                     st.rerun()
                 else: st.error("Nombre y Teléfono requeridos.")
 
-    elif opcion == "Despacho":
-        # --- NUEVO BOTÓN PARA VOLVER A REGISTRO ---
-        if st.button("⬅️ Ir a Registro"):
-            st.session_state.paso_despacho = "Registro"
-            st.rerun()
-
+    else:
         st.subheader("🚀 Nueva Salida de Equipo")
         with db_connection() as conn:
             clientes_df = pd.read_sql_query("SELECT id, nombre, tel FROM clientes ORDER BY id DESC", conn)
@@ -133,6 +128,7 @@ elif menu == "👥 Clientes/Despacho":
                 hrs = st.number_input("Horas de alquiler", 1, 72, 4)
                 
                 if st.form_submit_button("Confirmar Salida"):
+                    # Obtener datos para el registro y el mensaje
                     cliente_info = clientes_df[clientes_df['nombre'] == c_sel].iloc[0]
                     id_c = cliente_info['id']
                     telefono = cliente_info['tel']
@@ -147,13 +143,26 @@ elif menu == "👥 Clientes/Despacho":
                     
                     st.success(f"Salida de {l_sel} registrada con éxito.")
 
+                    # --- LÓGICA DEL BOTÓN DIRECTO A WHATSAPP ---
+                    # Limpiamos el teléfono (solo números)
                     tel_limpio = "".join(filter(str.isdigit, str(telefono)))
                     texto_msg = f"Hola {c_sel}, su servicio de lavandería ha iniciado. Equipo: {l_sel}. Entrega: {f_fin.strftime('%H:%M')}."
                     wa_url = f"https://wa.me/{tel_limpio}?text={texto_msg.replace(' ', '%20')}"
                     
+                    # El botón aparece inmediatamente después de confirmar
                     st.markdown(f"""
                         <a href="{wa_url}" target="_blank" style="text-decoration: none;">
-                            <div style="background-color: #25D366; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; margin-top: 20px;">
+                            <div style="
+                                background-color: #25D366;
+                                color: white;
+                                padding: 15px;
+                                border-radius: 10px;
+                                text-align: center;
+                                font-weight: bold;
+                                font-size: 18px;
+                                cursor: pointer;
+                                border: 1px solid #128C7E;
+                                margin-top: 20px;">
                                 Enviar WhatsApp a {c_sel} 📲
                             </div>
                         </a>
