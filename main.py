@@ -146,7 +146,7 @@ elif menu == "👥 Clientes/Despacho":
             
             if 'last_dispatch' in st.session_state:
                 disp = st.session_state.last_dispatch
-                msg = (f"✅ *LAVANDERÍA MASTER PRO*\n\n"
+                msg = (f"✅ *LAVANDERÍA LOS AUTÉNTICOS EXPRESS*\n\n"
                        f"Hola *{disp['nombre']}*, tu equipo *{disp['equipo']}* ha sido despachado.\n"
                        f"⏰ Tiempo: *{disp['horas']} horas*.\n"
                        f"🔔 Retiro estimado: *{disp['fin']}*.\n\n"
@@ -251,4 +251,3 @@ elif menu == "📊 Reportes":
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al intentar borrar: {e}")
-                                             
