@@ -3,7 +3,6 @@ import pandas as pd
 import sqlite3
 from datetime import datetime, timedelta
 import re
-import time
 from contextlib import contextmanager
 
 # --- CONFIGURACIÓN ESTÉTICA ---
@@ -14,9 +13,8 @@ DB_NAME = 'sistema_lavanderia_v4.db'
 
 @contextmanager
 def db_connection():
-    """Gestiona la conexión de forma segura para evitar bloqueos de hilos."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
-    conn.row_factory = sqlite3.Row  # Permite acceder por nombre de columna
+    conn.row_factory = sqlite3.Row
     try:
         yield conn
     finally:
@@ -34,11 +32,9 @@ def inicializar_db():
         c.execute('''CREATE TABLE IF NOT EXISTS historial_alquileres 
                      (id INTEGER PRIMARY KEY, id_cliente INTEGER, id_lavadora INTEGER, fecha DATETIME, 
                       monto REAL, usuario_cobro TEXT)''')
-        # Insertar usuarios por defecto
         c.execute("INSERT OR IGNORE INTO usuarios VALUES ('admin', 'admin123', 'Admin'), ('cajera', 'caja123', 'Cajera')")
         conn.commit()
 
-# Inicializar Base de Datos al arrancar
 inicializar_db()
 
 # --- ESTADOS DE SESIÓN ---
@@ -221,10 +217,38 @@ elif menu == "📊 Reportes":
     if st.session_state['rol'] != "Admin": 
         st.error("Acceso restringido a Administradores.")
         st.stop()
+        
     st.title("📊 Reporte de Ventas")
+    
     with db_connection() as conn:
         df = pd.read_sql_query("SELECT * FROM historial_alquileres", conn)
     
     st.metric("Recaudación Total", f"${df['monto'].sum():,.2f}")
     st.dataframe(df, use_container_width=True)
-    
+
+    # --- SECCIÓN DE PELIGRO (BORRADO DE DATOS) ---
+    st.divider()
+    with st.expander("⚠️ ZONA DE PELIGRO - Configuración Avanzada"):
+        st.warning("Las siguientes acciones son irreversibles. Proceda con precaución.")
+        
+        # Checkbox de seguridad adicional
+        confirmacion = st.checkbox("Entiendo que borrar los datos eliminará todo el historial, clientes y equipos.")
+        
+        if st.button("🔥 ELIMINAR TODOS LOS DATOS DEL SISTEMA", type="secondary", disabled=not confirmacion):
+            try:
+                with db_connection() as conn:
+                    c = conn.cursor()
+                    # Borramos contenido de todas las tablas excepto 'usuarios'
+                    c.execute("DELETE FROM historial_alquileres")
+                    c.execute("DELETE FROM alquileres_activos")
+                    c.execute("DELETE FROM lavadoras")
+                    c.execute("DELETE FROM clientes")
+                    conn.commit()
+                
+                st.toast("Base de datos limpiada con éxito", icon="🗑️")
+                st.success("Todos los registros han sido eliminados. El sistema está vacío.")
+                time.sleep(2)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al intentar borrar: {e}")
+                                             
