@@ -14,7 +14,7 @@ DB_NAME = 'sistema_lavanderia_v4.db'
 
 @contextmanager
 def db_connection():
-    """Gestiona la conexión de forma segura para evitar bloqueos de hilos."""
+    """Gestiona la conexión de forma segura."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
@@ -60,8 +60,6 @@ if not st.session_state['auth']:
 
 # --- NAVEGACIÓN LATERAL ---
 st.sidebar.title(f"👤 {st.session_state['user']}")
-
-# Definir opciones del menú (La configuración solo aparece para Admin)
 opciones_menu = ["🧺 Equipos", "👥 Clientes/Despacho", "⏱️ Monitor", "🚚 Recepción", "📊 Reportes"]
 if st.session_state['rol'] == "Admin":
     opciones_menu.append("⚙️ Configuración")
@@ -84,7 +82,7 @@ if menu == "🧺 Equipos":
                 with db_connection() as conn:
                     conn.execute("INSERT INTO lavadoras (serie, modelo, estado) VALUES (?,?,'Disponible')", (s, m))
                     conn.commit()
-                st.success(f"Lavadora {s} registrada correctamente.")
+                st.success(f"Lavadora {s} registrada.")
             else: st.warning("Complete todos los campos.")
     
     with db_connection() as conn:
@@ -101,9 +99,9 @@ elif menu == "👥 Clientes/Despacho":
         with st.form("cli_form", clear_on_submit=True):
             st.subheader("📝 Nuevo Registro")
             nom = st.text_input("Nombre Completo")
-            tel = st.text_input("WhatsApp (Ej: 584121234567)")
-            gps = st.text_input("Link Ubicación (Google Maps)")
-            notas = st.text_area("Notas de Dirección")
+            tel = st.text_input("WhatsApp")
+            gps = st.text_input("Link Ubicación")
+            notas = st.text_area("Notas")
             if st.form_submit_button("Guardar y Continuar"):
                 if nom and tel:
                     coords = re.findall(r"([-+]?\d+\.\d+)", gps)
@@ -125,14 +123,12 @@ elif menu == "👥 Clientes/Despacho":
         
         if not clientes_df.empty and not lavadoras_df.empty:
             with st.form("despacho_form"):
-                col_a, col_b = st.columns(2)
-                c_sel = col_a.selectbox("Seleccionar Cliente", clientes_df['nombre'])
-                l_sel = col_b.selectbox("Seleccionar Lavadora", lavadoras_df['serie'])
-                hrs = st.number_input("Horas de alquiler", 1, 72, 4)
-                
-                cliente_data = clientes_df[clientes_df['nombre'] == c_sel].iloc[0]
+                c_sel = st.selectbox("Cliente", clientes_df['nombre'])
+                l_sel = st.selectbox("Lavadora", lavadoras_df['serie'])
+                hrs = st.number_input("Horas", 1, 72, 4)
                 
                 if st.form_submit_button("Confirmar Salida"):
+                    cliente_data = clientes_df[clientes_df['nombre'] == c_sel].iloc[0]
                     id_c = cliente_data['id']
                     id_l = lavadoras_df[lavadoras_df['serie'] == l_sel]['id'].values[0]
                     f_fin = datetime.now() + timedelta(hours=hrs)
@@ -142,132 +138,85 @@ elif menu == "👥 Clientes/Despacho":
                                      (id_c, id_l, datetime.now(), f_fin))
                         conn.execute("UPDATE lavadoras SET estado='En Uso' WHERE id=?", (id_l,))
                         conn.commit()
-                    
-                    st.session_state.last_dispatch = {
-                        "nombre": c_sel.upper(),
-                        "tel": cliente_data['tel'],
-                        "equipo": l_sel,
-                        "fin": f_fin.strftime("%H:%M"),
-                        "horas": hrs
-                    }
                     st.rerun()
-            
-            if 'last_dispatch' in st.session_state:
-                disp = st.session_state.last_dispatch
-                msg = (f"✅ *LAVANDERÍA MASTER PRO*\n\n"
-                       f"Hola *{disp['nombre']}*, tu equipo *{disp['equipo']}* ha sido despachado.\n"
-                       f"⏰ Tiempo: *{disp['horas']} horas*.\n"
-                       f"🔔 Retiro estimado: *{disp['fin']}*.\n\n"
-                       f"¡Gracias por su preferencia!")
-                
-                clean_tel = ''.join(filter(str.isdigit, disp['tel']))
-                url_wa = f"https://wa.me/{clean_tel}?text={re.sub(r'\s', '%20', msg)}"
-                
-                st.divider()
-                st.link_button(f"📲 Enviar WhatsApp a {disp['nombre']}", url_wa, type="primary", use_container_width=True)
-                if st.button("Limpiar y Nuevo Despacho"):
-                    del st.session_state.last_dispatch
-                    st.rerun()
-        else: st.warning("No hay clientes registrados o lavadoras disponibles.")
 
 # --- MÓDULO 2: MONITOR ---
 elif menu == "⏱️ Monitor":
-    st.title("⏱️ Control de Alquileres Activos")
+    st.title("⏱️ Monitor en Tiempo Real")
     query = '''SELECT a.id, c.nombre, l.serie, l.id as lid, a.fin FROM alquileres_activos a 
                JOIN clientes c ON a.id_cliente = c.id JOIN lavadoras l ON a.id_lavadora = l.id'''
     with db_connection() as conn:
         activos = pd.read_sql_query(query, conn)
 
     if activos.empty:
-        st.info("No hay equipos en alquiler actualmente.")
+        st.info("No hay alquileres activos.")
     else:
         for _, row in activos.iterrows():
             with st.container(border=True):
                 col1, col2, col3 = st.columns([2,2,1])
-                col1.write(f"### {row['nombre']}")
-                col1.write(f"Lavadora: **{row['serie']}**")
-                
-                fin_dt = pd.to_datetime(row['fin'])
-                resta = (fin_dt - datetime.now()).total_seconds() / 60
-                if resta > 0: col2.success(f"⏳ {int(resta)} min restantes")
-                else: col2.error(f"⚠️ Retraso: {abs(int(resta))} min")
-
-                with col3.popover("🏁 Finalizar"):
-                    with st.form(f"f_{row['id']}"):
-                        monto = st.number_input("Monto Cobrado $", min_value=0.0, key=f"m_{row['id']}")
-                        if st.form_submit_button("Confirmar Cobro"):
-                            with db_connection() as conn:
-                                conn.execute("INSERT INTO historial_alquileres (id_cliente, id_lavadora, fecha, monto, usuario_cobro) VALUES (?,?,?,?,?)",
-                                             (row['id'], row['lid'], datetime.now(), monto, st.session_state['user']))
-                                conn.execute("UPDATE lavadoras SET estado='Retornando' WHERE id=?", (row['lid'],))
-                                conn.execute("DELETE FROM alquileres_activos WHERE id=?", (row['id'],))
-                                conn.commit()
-                            st.rerun()
+                col1.write(f"**{row['nombre']}** ({row['serie']})")
+                col2.write(f"Fin: {row['fin']}")
+                if col3.button("Finalizar", key=f"btn_{row['id']}"):
+                    with db_connection() as conn:
+                        conn.execute("INSERT INTO historial_alquileres (id_cliente, id_lavadora, fecha, monto, usuario_cobro) VALUES (?,?,?,?,?)",
+                                     (row['id'], row['lid'], datetime.now(), 0.0, st.session_state['user']))
+                        conn.execute("UPDATE lavadoras SET estado='Retornando' WHERE id=?", (row['lid'],))
+                        conn.execute("DELETE FROM alquileres_activos WHERE id=?", (row['id'],))
+                        conn.commit()
+                    st.rerun()
 
 # --- MÓDULO 3: RECEPCIÓN ---
 elif menu == "🚚 Recepción":
-    st.title("📥 Reingreso a Bodega")
+    st.title("📥 Reingreso")
     with db_connection() as conn:
-        df = pd.read_sql_query("SELECT id, serie, modelo FROM lavadoras WHERE estado='Retornando'", conn)
-    
-    if df.empty:
-        st.info("No hay equipos pendientes de reingreso.")
-    else:
-        for _, l in df.iterrows():
-            if st.button(f"📥 Confirmar Entrada: {l['serie']} ({l['modelo']})", key=f"rec_{l['id']}", use_container_width=True):
-                with db_connection() as conn:
-                    conn.execute("UPDATE lavadoras SET estado='Disponible' WHERE id=?", (l['id'],))
-                    conn.commit()
-                st.rerun()
+        df = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Retornando'", conn)
+    for _, l in df.iterrows():
+        if st.button(f"📥 Bodega: {l['serie']}", key=f"rec_{l['id']}"):
+            with db_connection() as conn:
+                conn.execute("UPDATE lavadoras SET estado='Disponible' WHERE id=?", (l['id'],))
+                conn.commit()
+            st.rerun()
 
 # --- MÓDULO 4: REPORTES ---
 elif menu == "📊 Reportes":
-    if st.session_state['rol'] != "Admin": 
-        st.error("Acceso restringido a Administradores.")
-        st.stop()
-    st.title("📊 Reporte de Ventas")
+    st.title("📊 Reporte")
     with db_connection() as conn:
         df = pd.read_sql_query("SELECT * FROM historial_alquileres", conn)
-    
-    st.metric("Recaudación Total", f"${df['monto'].sum():,.2f}")
     st.dataframe(df, use_container_width=True)
 
-# --- MÓDULO 5: CONFIGURACIÓN (BORRADO) ---
+# --- MÓDULO 5: CONFIGURACIÓN (ELIMINACIÓN TOTAL) ---
 elif menu == "⚙️ Configuración":
-    st.title("⚙️ Mantenimiento del Sistema")
-    st.header("🗑️ Borrado de Base de Datos")
+    st.title("⚙️ Configuración de Sistema")
+    st.markdown("---")
+    st.subheader("🗑️ Zona de Peligro: Borrado de Base de Datos")
     
     with st.container(border=True):
-        st.error("### ⚠️ ADVERTENCIA CRÍTICA")
-        st.write("Esta acción eliminará permanentemente todos los registros de:")
-        st.write("*   Clientes registrados")
-        st.write("*   Inventario de lavadoras")
-        *   "Historial de ventas y alquileres activos"
+        st.warning("Esta acción borrará **TODOS** los clientes, lavadoras, alquileres e historial.")
+        st.info("Nota: Las cuentas de usuario no se verán afectadas.")
         
-        st.info("Nota: Las cuentas de usuario (Admin/Cajera) no se borrarán.")
+        check_confirm = st.checkbox("Entiendo que esto es irreversible y deseo continuar.")
+        clave_borrado = st.text_input("Escriba la frase de seguridad: **BORRAR TODO**")
         
-        # Doble factor de confirmación
-        confirm_check = st.checkbox("Confirmo que deseo vaciar todo el sistema.")
-        codigo_seguridad = st.text_input("Escriba 'BORRAR TODO' para habilitar el botón:")
-        
-        btn_borrar = st.button("🔥 EJECUTAR BORRADO TOTAL", 
-                               type="primary", 
-                               disabled=not (confirm_check and codigo_seguridad == "BORRAR TODO"),
-                               use_container_width=True)
-        
-        if btn_borrar:
-            try:
-                with db_connection() as conn:
-                    c = conn.cursor()
-                    c.execute("DELETE FROM historial_alquileres")
-                    c.execute("DELETE FROM alquileres_activos")
-                    c.execute("DELETE FROM lavadoras")
-                    c.execute("DELETE FROM clientes")
+        # El botón solo se activa si se cumplen ambas condiciones
+        if st.button("🔥 EJECUTAR BORRADO TOTAL", 
+                     type="primary", 
+                     disabled=not (check_confirm and clave_borrado == "BORRAR"),
+                     use_container_width=True):
+            
+            # Ejecución directa del borrado
+            with db_connection() as conn:
+                cursor = conn.cursor()
+                try:
+                    # Limpiamos las tablas principales
+                    cursor.execute("DELETE FROM alquileres_activos")
+                    cursor.execute("DELETE FROM historial_alquileres")
+                    cursor.execute("DELETE FROM lavadoras")
+                    cursor.execute("DELETE FROM clientes")
                     conn.commit()
-                
-                st.success("✅ Sistema restaurado correctamente. Redirigiendo...")
-                time.sleep(2)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error al limpiar base de datos: {e}")
-        
+                    
+                    st.success("✅ ¡Base de datos vaciada con éxito!")
+                    time.sleep(1.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al intentar borrar los datos: {e}")
+                    
