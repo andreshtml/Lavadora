@@ -3,11 +3,11 @@ import pandas as pd
 import sqlite3
 from datetime import datetime, timedelta
 import re
-import time
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Lavandería Master Pro v4.0", layout="wide", page_icon="🧺")
 
+# Conexión persistente
 conn = sqlite3.connect('sistema_lavanderia_v4.db', check_same_thread=False)
 c = conn.cursor()
 
@@ -27,15 +27,15 @@ def inicializar_db():
 
 inicializar_db()
 
-# --- GESTIÓN DE ESTADO DE NAVEGACIÓN ---
+# --- FUNCIONES DE NAVEGACIÓN ---
 if 'radio_despacho' not in st.session_state:
     st.session_state.radio_despacho = "Registro"
 
-def cambiar_a_registro():
-    st.session_state.radio_despacho = "Registro"
-
-def cambiar_a_despacho():
+def ir_a_despacho():
     st.session_state.radio_despacho = "Despacho"
+
+def ir_a_registro():
+    st.session_state.radio_despacho = "Registro"
 
 # --- AUTENTICACIÓN ---
 if 'auth' not in st.session_state: st.session_state['auth'] = False
@@ -67,48 +67,54 @@ if st.sidebar.button("Cerrar Sesión"):
 if menu == "👥 Clientes y Despacho":
     st.title("👥 Gestión de Clientes y Salida")
 
-    # Radio con el estado controlado por session_state
+    # Radio controlado por el estado
     opcion = st.radio("Seleccione Acción:", ["Registro", "Despacho"], 
                       key="radio_despacho", 
                       horizontal=True)
 
     if opcion == "Registro":
+        # Formulario de Registro
         with st.form("reg_cli", clear_on_submit=True):
             st.subheader("➕ Registro Nuevo Cliente")
             nom = st.text_input("Nombre Completo")
             tel = st.text_input("WhatsApp (Ej: 58412...)")
             gps = st.text_input("Link Ubicación WhatsApp")
             nota = st.text_area("Notas de Dirección")
-            enviar_reg = st.form_submit_button("Guardar Cliente y Ir a Despacho")
+            
+            # El botón de formulario NO puede tener on_click si se usa para procesar datos del form
+            enviar_reg = st.form_submit_button("Guardar Cliente e ir a Despacho")
 
             if enviar_reg:
                 if nom and tel:
                     lat, lon = 0.0, 0.0
                     coords = re.findall(r"([-+]?\d*\.\d+|\d+)", gps)
                     if len(coords)>=2: lat, lon = float(coords[0]), float(coords[1])
-                    c.execute("INSERT INTO clientes (nombre, tel, lat, lon, notas, fecha_registro) VALUES (?,?,?,?,?,?)",
-                             (nom, tel, lat, lon, nota, datetime.now()))
-                    conn.commit()
-                    st.toast("✅ Cliente guardado")
-                    # Cambiamos el estado y forzamos reinicio para que el radio se actualice
-                    st.session_state.radio_despacho = "Despacho"
-                    st.rerun()
+                    
+                    try:
+                        c.execute("INSERT INTO clientes (nombre, tel, lat, lon, notas, fecha_registro) VALUES (?,?,?,?,?,?)",
+                                 (nom, tel, lat, lon, nota, datetime.now()))
+                        conn.commit()
+                        st.success("✅ Cliente guardado correctamente")
+                        
+                        # CAMBIO CLAVE: Usamos el cambio de estado y rerun manual después de la lógica
+                        st.session_state.radio_despacho = "Despacho"
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al guardar: {e}")
                 else:
-                    st.error("Nombre y Teléfono requeridos")
+                    st.error("Nombre y Teléfono son obligatorios")
 
     elif opcion == "Despacho":
         st.subheader("🚀 Despacho de Equipos")
         
-        # Botón para volver que limpia el estado correctamente
-        if st.button("⬅️ Volver a Registro", on_click=cambiar_a_registro):
-            st.rerun()
+        # Botón para volver usando callback
+        st.button("⬅️ Volver a Registro", on_click=ir_a_registro)
 
         df_c = pd.read_sql_query("SELECT id, nombre, tel FROM clientes ORDER BY id DESC", conn)
         df_l = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Disponible'", conn)
         df_r = pd.read_sql_query("SELECT usuario FROM usuarios WHERE rol='Repartidor'", conn)
 
         if not df_c.empty and not df_l.empty:
-            # Usamos un formulario para asegurar la limpieza de los inputs al enviar
             with st.form("form_salida", clear_on_submit=True):
                 col1, col2 = st.columns(2)
                 c_sel = col1.selectbox("👤 Seleccionar Cliente", df_c['nombre'])
@@ -134,14 +140,10 @@ if menu == "👥 Clientes y Despacho":
                 
                 st.success(f"Despacho procesado para {c_sel}")
                 st.link_button("📲 Enviar WhatsApp", url_wa)
-                
-                # Botón opcional para refrescar la lista de lavadoras disponibles
-                if st.button("Hacer otro despacho"):
-                    st.rerun()
         else:
-            st.warning("Asegúrese de tener clientes registrados y lavadoras con estado 'Disponible'.")
+            st.warning("⚠️ Se requiere al menos un cliente registrado y una lavadora 'Disponible'.")
 
-# --- MANTENIMIENTO DE OTROS MÓDULOS (SIMPLIFICADO) ---
+# --- OTROS MÓDULOS ---
 elif menu == "🧺 Inventario Equipos":
     st.title("🧺 Inventario")
     with st.form("add_lav"):
@@ -154,7 +156,7 @@ elif menu == "🧺 Inventario Equipos":
     st.dataframe(pd.read_sql_query("SELECT * FROM lavadoras", conn))
 
 elif menu == "⏱️ Control de Tiempos":
-    st.title("⏱️ Monitor")
+    st.title("⏱️ Monitor de Alquileres")
     activos = pd.read_sql_query('''SELECT a.id, c.nombre, l.serie, a.fin FROM alquileres_activos a 
                                    JOIN clientes c ON a.id_cliente = c.id 
                                    JOIN lavadoras l ON a.id_lavadora = l.id''', conn)
@@ -162,8 +164,8 @@ elif menu == "⏱️ Control de Tiempos":
 
 elif menu == "📊 Reporte Admin":
     if rol_actual == "Admin":
-        st.title("📊 Ventas")
+        st.title("📊 Historial de Ventas")
         st.dataframe(pd.read_sql_query("SELECT * FROM historial_alquileres", conn))
     else:
-        st.error("No tienes permisos.")
-            
+        st.error("Acceso restringido a Administradores.")
+        
