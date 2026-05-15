@@ -162,7 +162,7 @@ elif menu == "👥 Clientes/Despacho":
 
                     # WhatsApp Link
                     tel_limpio = "".join(filter(str.isdigit, str(telefono)))
-                    texto_msg = f" {c_sel}, ✅ *¡Hola, DAMAIRA !* Tu lavadora ya salió. Repartidor: *REPARTIDOR*. . Equipo: {l_sel}. Entrega: {f_fin.strftime('%H:%M')}."
+                    texto_msg = f"Hola {c_sel}, su servicio de lavandería ha iniciado. Equipo: {l_sel}. Entrega: {f_fin.strftime('%H:%M')}."
                     wa_url = f"https://wa.me/{tel_limpio}?text={texto_msg.replace(' ', '%20')}"
                     
                     st.markdown(f"""
@@ -236,4 +236,4 @@ elif menu == "⚙️ Configuración":
                 conn.commit()
                 st.success("Base de datos vaciada.")
                 st.rerun()
-                
+                    
