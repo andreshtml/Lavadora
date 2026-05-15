@@ -3,7 +3,6 @@ import pandas as pd
 import sqlite3
 from datetime import datetime, timedelta
 import re
-import time
 from contextlib import contextmanager
 
 # --- CONFIGURACIÓN ESTÉTICA ---
@@ -92,8 +91,13 @@ if menu == "🧺 Equipos":
 # --- MÓDULO 1: CLIENTES Y DESPACHO ---
 elif menu == "👥 Clientes/Despacho":
     st.title("👥 Clientes y Salidas")
+    
+    # Sincronización del radio button con el estado de la sesión
     opcion = st.radio("Acción:", ["Registro", "Despacho"], index=st.session_state.paso_despacho, horizontal=True)
-    st.session_state.paso_despacho = 0 if opcion == "Registro" else 1
+    
+    # Actualizar estado basado en la elección manual del radio
+    if opcion == "Registro": st.session_state.paso_despacho = 0
+    else: st.session_state.paso_despacho = 1
 
     if st.session_state.paso_despacho == 0:
         with st.form("cli_form", clear_on_submit=True):
@@ -116,6 +120,11 @@ elif menu == "👥 Clientes/Despacho":
                 else: st.error("Nombre y Teléfono requeridos.")
 
     else:
+        # --- BOTÓN PARA VOLVER A REGISTRO ---
+        if st.button("⬅️ Ir a Registro (Nuevo Cliente)"):
+            st.session_state.paso_despacho = 0
+            st.rerun()
+
         st.subheader("🚀 Nueva Salida de Equipo")
         with db_connection() as conn:
             clientes_df = pd.read_sql_query("SELECT id, nombre, tel FROM clientes ORDER BY id DESC", conn)
@@ -128,7 +137,6 @@ elif menu == "👥 Clientes/Despacho":
                 hrs = st.number_input("Horas de alquiler", 1, 72, 4)
                 
                 if st.form_submit_button("Confirmar Salida"):
-                    # Obtener datos para el registro y el mensaje
                     cliente_info = clientes_df[clientes_df['nombre'] == c_sel].iloc[0]
                     id_c = cliente_info['id']
                     telefono = cliente_info['tel']
@@ -143,35 +151,23 @@ elif menu == "👥 Clientes/Despacho":
                     
                     st.success(f"Salida de {l_sel} registrada con éxito.")
 
-                    # --- LÓGICA DEL BOTÓN DIRECTO A WHATSAPP ---
-                    # Limpiamos el teléfono (solo números)
+                    # Lógica WhatsApp
                     tel_limpio = "".join(filter(str.isdigit, str(telefono)))
-                    texto_msg = f"Hola {c_sel}, su servicio de lavandería los auténticos express ha iniciado. Equipo: {l_sel}. Entrega: {f_fin.strftime('%H:%M')}."
+                    texto_msg = f"Hola {c_sel}, su servicio de lavandería ha iniciado. Equipo: {l_sel}. Entrega estimada: {f_fin.strftime('%H:%M')}."
                     wa_url = f"https://wa.me/{tel_limpio}?text={texto_msg.replace(' ', '%20')}"
                     
-                    # El botón aparece inmediatamente después de confirmar
                     st.markdown(f"""
                         <a href="{wa_url}" target="_blank" style="text-decoration: none;">
-                            <div style="
-                                background-color: #25D366;
-                                color: white;
-                                padding: 15px;
-                                border-radius: 10px;
-                                text-align: center;
-                                font-weight: bold;
-                                font-size: 18px;
-                                cursor: pointer;
-                                border: 1px solid #128C7E;
-                                margin-top: 20px;">
+                            <div style="background-color: #25D366; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 18px; cursor: pointer; border: 1px solid #128C7E; margin-top: 20px;">
                                 Enviar WhatsApp a {c_sel} 📲
                             </div>
                         </a>
                     """, unsafe_allow_html=True)
 
         elif clientes_df.empty:
-            st.warning("No hay clientes registrados.")
+            st.warning("No hay clientes registrados en la base de datos.")
         else:
-            st.warning("No hay equipos disponibles.")
+            st.warning("No hay equipos disponibles para despacho.")
 
 # --- MÓDULO 2: MONITOR ---
 elif menu == "⏱️ Monitor":
@@ -203,6 +199,8 @@ elif menu == "🚚 Recepción":
     st.title("📥 Reingreso a Bodega")
     with db_connection() as conn:
         df = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Retornando'", conn)
+    if df.empty:
+        st.info("No hay equipos pendientes de retorno.")
     for _, l in df.iterrows():
         if st.button(f"📥 Bodega: {l['serie']}", key=f"rec_{l['id']}", use_container_width=True):
             with db_connection() as conn:
@@ -231,4 +229,4 @@ elif menu == "⚙️ Configuración":
                 conn.commit()
                 st.success("Base de datos vaciada.")
                 st.rerun()
-                    
+    
