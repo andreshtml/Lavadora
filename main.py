@@ -34,9 +34,9 @@ def registrar_log(accion):
     c.execute("INSERT INTO logs (usuario, accion, fecha) VALUES (?,?,?)", (user, accion, datetime.now()))
     conn.commit()
 
-# --- ESTADO DE NAVEGACIÓN ---
-if 'radio_despacho' not in st.session_state:
-    st.session_state.radio_despacho = "Registro"
+# --- GESTIÓN DE NAVEGACIÓN INTERNA (SOLUCIÓN AL ERROR) ---
+if 'paso_despacho' not in st.session_state:
+    st.session_state.paso_despacho = 0  # 0 para Registro, 1 para Despacho
 
 # --- AUTENTICACIÓN ---
 if 'auth' not in st.session_state: st.session_state['auth'] = False
@@ -65,7 +65,7 @@ if st.sidebar.button("Cerrar Sesión"):
     st.session_state['auth'] = False
     st.rerun()
 
-# --- MÓDULO 0: INVENTARIO DE LAVADORAS ---
+# --- MÓDULO 0: INVENTARIO ---
 if menu == "🧺 Inventario Equipos":
     st.title("🧺 Gestión de Lavadoras")
     
@@ -87,16 +87,24 @@ if menu == "🧺 Inventario Equipos":
     df_lavs = pd.read_sql_query("SELECT serie, modelo, estado FROM lavadoras", conn)
     st.dataframe(df_lavs, use_container_width=True)
 
-# --- MÓDULO 1: CLIENTES Y DESPACHO ---
+# --- MÓDULO 1: CLIENTES Y DESPACHO (CORREGIDO) ---
 elif menu == "👥 Clientes y Despacho":
     st.title("👥 Gestión de Clientes y Salida")
 
-    # Usamos el session_state vinculado al radio para controlar la pestaña activa
-    opcion = st.radio("Seleccione Acción:", ["Registro", "Despacho"], 
-                      key="radio_despacho",
-                      horizontal=True)
+    # Usamos index vinculado a nuestra variable de estado numérica
+    opcion = st.radio(
+        "Seleccione Acción:", 
+        ["Registro", "Despacho"], 
+        index=st.session_state.paso_despacho,
+        horizontal=True,
+        key="radio_nav"
+    )
 
-    if opcion == "Registro":
+    # Sincronizar el estado si el usuario hace click manualmente en el radio
+    if opcion == "Registro": st.session_state.paso_despacho = 0
+    else: st.session_state.paso_despacho = 1
+
+    if st.session_state.paso_despacho == 0:
         def procesar_cliente():
             nom = st.session_state.c_nom
             tel = st.session_state.c_tel
@@ -109,10 +117,10 @@ elif menu == "👥 Clientes y Despacho":
                          (nom, tel, lat, lon, st.session_state.c_nota, datetime.now()))
                 conn.commit()
                 
-                # CAMBIO SOLICITADO: Cambiamos a despacho y refrescamos
-                st.session_state.radio_despacho = "Despacho"
-                st.toast(f"✅ Cliente {nom} registrado. Redirigiendo...")
-                time.sleep(0.6)
+                # Cambiamos el índice y refrescamos
+                st.session_state.paso_despacho = 1
+                st.toast(f"✅ Cliente {nom} registrado.")
+                time.sleep(0.5)
                 st.rerun()
             else: st.error("Nombre y Teléfono requeridos")
 
@@ -127,7 +135,7 @@ elif menu == "👥 Clientes y Despacho":
     else:
         st.subheader("🚀 Despacho de Equipos")
         if st.button("⬅️ Volver a Registro"):
-            st.session_state.radio_despacho = "Registro"
+            st.session_state.paso_despacho = 0
             st.rerun()
 
         df_c = pd.read_sql_query("SELECT id, nombre, tel FROM clientes ORDER BY id DESC", conn)
@@ -180,14 +188,14 @@ elif menu == "⏱️ Control de Tiempos":
                 
                 with c3:
                     if st.button("🏁 Cobrar", key=f"cob_{row['id']}"):
-                        with st.expander("Detalles de Pago"):
-                            monto = st.number_input("Total $", key=f"v_{row['id']}")
-                            if st.button("Finalizar", key=f"f_{row['id']}"):
-                                c.execute("INSERT INTO historial_alquileres (id_cliente, id_lavadora, fecha, monto, usuario_cobro) VALUES (?,?,?,?,?)",
-                                         (row['id'], row['id_lav'], datetime.now(), monto, user_active))
-                                c.execute("UPDATE lavadoras SET estado='Retornando' WHERE id=?", (row['id_lav'],))
-                                c.execute("DELETE FROM alquileres_activos WHERE id=?", (row['id'],))
-                                conn.commit(); st.rerun()
+                        monto = st.number_input("Total $", key=f"val_{row['id']}")
+                        if st.button("Confirmar Pago", key=f"fin_{row['id']}"):
+                            c.execute("INSERT INTO historial_alquileres (id_cliente, id_lavadora, fecha, monto, usuario_cobro) VALUES (?,?,?,?,?)",
+                                     (row['id'], row['id_lav'], datetime.now(), monto, user_active))
+                            c.execute("UPDATE lavadoras SET estado='Retornando' WHERE id=?", (row['id_lav'],))
+                            c.execute("DELETE FROM alquileres_activos WHERE id=?", (row['id'],))
+                            conn.commit()
+                            st.rerun()
 
 # --- MÓDULO 3: LOGÍSTICA BODEGA ---
 elif menu == "🚚 Logística Bodega":
@@ -213,4 +221,4 @@ elif menu == "⚙️ Configuración":
     if st.button("RESET TOTAL") and confirm == "BORRAR":
         c.execute("DELETE FROM clientes"); c.execute("DELETE FROM alquileres_activos")
         c.execute("DELETE FROM lavadoras"); conn.commit(); st.rerun()
-    
+        
