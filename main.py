@@ -4,221 +4,194 @@ import sqlite3
 from datetime import datetime, timedelta
 import re
 import time
+from contextlib import contextmanager
 
 # --- CONFIGURACIÓN ESTÉTICA ---
-st.set_page_config(page_title="Lavandería Master Pro v4.0", layout="wide", page_icon="🧺")
+st.set_page_config(page_title="Lavandería Master Pro v5.0", layout="wide", page_icon="🧺")
 
-# --- CONEXIÓN A BASE DE DATOS ---
-conn = sqlite3.connect('sistema_lavanderia_v4.db', check_same_thread=False)
-c = conn.cursor()
+# --- GESTIÓN ROBUSTA DE BASE DE DATOS ---
+DB_NAME = 'sistema_lavanderia_v4.db'
+
+@contextmanager
+def db_connection():
+    """Gestiona la conexión de forma segura para evitar bloqueos de hilos."""
+    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+    conn.row_factory = sqlite3.Row # Permite acceder por nombre de columna
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 def inicializar_db():
-    c.execute('CREATE TABLE IF NOT EXISTS usuarios (usuario TEXT PRIMARY KEY, clave TEXT, rol TEXT)')
-    c.execute('''CREATE TABLE IF NOT EXISTS clientes 
-                 (id INTEGER PRIMARY KEY, nombre TEXT, tel TEXT, lat REAL, lon REAL, notas TEXT, fecha_registro DATETIME)''')
-    c.execute('CREATE TABLE IF NOT EXISTS lavadoras (id INTEGER PRIMARY KEY, serie TEXT, modelo TEXT, estado TEXT)')
-    c.execute('''CREATE TABLE IF NOT EXISTS alquileres_activos 
-                 (id INTEGER PRIMARY KEY, id_cliente INTEGER, id_lavadora INTEGER, inicio DATETIME, fin DATETIME, 
-                  horas_extras INTEGER DEFAULT 0, avisado INTEGER DEFAULT 0, repartidor_asig TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS historial_alquileres 
-                 (id INTEGER PRIMARY KEY, id_cliente INTEGER, id_lavadora INTEGER, fecha DATETIME, 
-                  monto REAL, tipo_pago TEXT, referencia TEXT, usuario_cobro TEXT)''')
-    c.execute('CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY, usuario TEXT, accion TEXT, fecha DATETIME)')
-    c.execute("INSERT OR IGNORE INTO usuarios VALUES ('admin', 'admin123', 'Admin'), ('cajera', 'caja123', 'Cajera'), ('repartidor', 'ruta123', 'Repartidor')")
-    conn.commit()
-
-inicializar_db()
+    with db_connection() as conn:
+        c = conn.cursor()
+        c.execute('CREATE TABLE IF NOT EXISTS usuarios (usuario TEXT PRIMARY KEY, clave TEXT, rol TEXT)')
+        c.execute('''CREATE TABLE IF NOT EXISTS clientes 
+                     (id INTEGER PRIMARY KEY, nombre TEXT, tel TEXT, lat REAL, lon REAL, notas TEXT, fecha_registro DATETIME)''')
+        c.execute('CREATE TABLE IF NOT EXISTS lavadoras (id INTEGER PRIMARY KEY, serie TEXT, modelo TEXT, estado TEXT)')
+        c.execute('''CREATE TABLE IF NOT EXISTS alquileres_activos 
+                     (id INTEGER PRIMARY KEY, id_cliente INTEGER, id_lavadora INTEGER, inicio DATETIME, fin DATETIME, 
+                      repartidor_asig TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS historial_alquileres 
+                     (id INTEGER PRIMARY KEY, id_cliente INTEGER, id_lavadora INTEGER, fecha DATETIME, 
+                      monto REAL, usuario_cobro TEXT)''')
+        c.execute("INSERT OR IGNORE INTO usuarios VALUES ('admin', 'admin123', 'Admin'), ('cajera', 'caja123', 'Cajera')")
+        conn.commit()
 
 def registrar_log(accion):
     user = st.session_state.get('user', 'Sistema')
-    c.execute("INSERT INTO logs (usuario, accion, fecha) VALUES (?,?,?)", (user, accion, datetime.now()))
-    conn.commit()
+    with db_connection() as conn:
+        conn.execute("INSERT INTO logs (usuario, accion, fecha) VALUES (?,?,?)", 
+                     (user, accion, datetime.now()))
+        conn.commit()
 
-# --- GESTIÓN DE NAVEGACIÓN INTERNA (SOLUCIÓN AL ERROR) ---
-if 'paso_despacho' not in st.session_state:
-    st.session_state.paso_despacho = 0  # 0 para Registro, 1 para Despacho
+# Inicialización
+inicializar_db()
 
-# --- AUTENTICACIÓN ---
+# --- ESTADOS DE SESIÓN ---
+if 'paso_despacho' not in st.session_state: st.session_state.paso_despacho = 0
 if 'auth' not in st.session_state: st.session_state['auth'] = False
 
+# --- AUTENTICACIÓN ---
 if not st.session_state['auth']:
     st.title("🔐 Acceso Empresarial")
-    u = st.text_input("Usuario")
-    p = st.text_input("Contraseña", type="password")
-    if st.button("Iniciar Sesión"):
-        res = c.execute("SELECT rol FROM usuarios WHERE usuario=? AND clave=?", (u, p)).fetchone()
-        if res:
-            st.session_state.update({'auth': True, 'user': u, 'rol': res[0]})
-            registrar_log("Inicio de Sesión")
-            st.rerun()
-        else: st.error("Credenciales incorrectas")
+    with st.form("login_form"):
+        u = st.text_input("Usuario")
+        p = st.text_input("Contraseña", type="password")
+        if st.form_submit_button("Iniciar Sesión"):
+            with db_connection() as conn:
+                res = conn.execute("SELECT rol FROM usuarios WHERE usuario=? AND clave=?", (u, p)).fetchone()
+                if res:
+                    st.session_state.update({'auth': True, 'user': u, 'rol': res['rol']})
+                    st.rerun()
+                else: st.error("Credenciales incorrectas")
     st.stop()
 
-rol_actual = st.session_state['rol']
-user_active = st.session_state['user']
-
-# --- MENÚ LATERAL ---
-st.sidebar.title(f"👤 {user_active}")
-menu = st.sidebar.selectbox("Menú Principal", ["🧺 Inventario Equipos", "👥 Clientes y Despacho", "⏱️ Control de Tiempos", "🚚 Logística Bodega", "📊 Reporte Admin", "⚙️ Configuración"])
+# --- NAVEGACIÓN ---
+st.sidebar.title(f"👤 {st.session_state['user']}")
+menu = st.sidebar.selectbox("Menú", ["🧺 Equipos", "👥 Clientes/Despacho", "⏱️ Monitor", "🚚 Recepción", "📊 Reportes"])
 
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state['auth'] = False
     st.rerun()
 
-# --- MÓDULO 0: INVENTARIO ---
-if menu == "🧺 Inventario Equipos":
-    st.title("🧺 Gestión de Lavadoras")
-    
-    def guardar_lavadora():
-        s = st.session_state.serie_input
-        m = st.session_state.modelo_input
-        if s and m:
-            c.execute("INSERT INTO lavadoras (serie, modelo, estado) VALUES (?,?,'Disponible')", (s, m))
-            conn.commit()
-            st.toast(f"✅ Lavadora {s} registrada")
-        else: st.warning("Complete los campos")
-
-    with st.form("reg_lavadora", clear_on_submit=True):
+# --- MÓDULO: INVENTARIO ---
+if menu == "🧺 Equipos":
+    st.title("🧺 Gestión de Inventario")
+    with st.form("reg_lav", clear_on_submit=True):
         col1, col2 = st.columns(2)
-        col1.text_input("Número de Serie", key="serie_input")
-        col2.text_input("Modelo / Marca", key="modelo_input")
-        st.form_submit_button("Registrar Lavadora", on_click=guardar_lavadora)
+        s = col1.text_input("Serie")
+        m = col2.text_input("Modelo")
+        if st.form_submit_button("Guardar"):
+            if s and m:
+                with db_connection() as conn:
+                    conn.execute("INSERT INTO lavadoras (serie, modelo, estado) VALUES (?,?,'Disponible')", (s, m))
+                    conn.commit()
+                st.success("Registrada")
     
-    df_lavs = pd.read_sql_query("SELECT serie, modelo, estado FROM lavadoras", conn)
-    st.dataframe(df_lavs, use_container_width=True)
+    with db_connection() as conn:
+        df = pd.read_sql_query("SELECT serie, modelo, estado FROM lavadoras", conn)
+        st.table(df)
 
-# --- MÓDULO 1: CLIENTES Y DESPACHO (CORREGIDO) ---
-elif menu == "👥 Clientes y Despacho":
-    st.title("👥 Gestión de Clientes y Salida")
-
-    # Usamos index vinculado a nuestra variable de estado numérica
-    opcion = st.radio(
-        "Seleccione Acción:", 
-        ["Registro", "Despacho"], 
-        index=st.session_state.paso_despacho,
-        horizontal=True,
-        key="radio_nav"
-    )
-
-    # Sincronizar el estado si el usuario hace click manualmente en el radio
-    if opcion == "Registro": st.session_state.paso_despacho = 0
-    else: st.session_state.paso_despacho = 1
+# --- MÓDULO: CLIENTES Y DESPACHO (CORREGIDO) ---
+elif menu == "👥 Clientes/Despacho":
+    opcion = st.radio("Acción:", ["Registro", "Despacho"], index=st.session_state.paso_despacho, horizontal=True)
+    st.session_state.paso_despacho = 0 if opcion == "Registro" else 1
 
     if st.session_state.paso_despacho == 0:
-        def procesar_cliente():
-            nom = st.session_state.c_nom
-            tel = st.session_state.c_tel
-            gps = st.session_state.c_gps
-            if nom and tel:
-                lat, lon = 0.0, 0.0
-                coords = re.findall(r"([-+]?\d*\.\d+|\d+)", gps)
-                if len(coords)>=2: lat, lon = float(coords[0]), float(coords[1])
-                c.execute("INSERT INTO clientes (nombre, tel, lat, lon, notas, fecha_registro) VALUES (?,?,?,?,?,?)",
-                         (nom, tel, lat, lon, st.session_state.c_nota, datetime.now()))
-                conn.commit()
-                
-                # Cambiamos el índice y refrescamos
-                st.session_state.paso_despacho = 1
-                st.toast(f"✅ Cliente {nom} registrado.")
-                time.sleep(0.5)
-                st.rerun()
-            else: st.error("Nombre y Teléfono requeridos")
-
-        with st.form("reg_cli", clear_on_submit=True):
-            st.subheader("➕ Registro Nuevo Cliente")
-            st.text_input("Nombre Completo", key="c_nom")
-            st.text_input("WhatsApp (Ej: 58412...)", key="c_tel")
-            st.text_input("Link Ubicación WhatsApp", key="c_gps")
-            st.text_area("Notas de Dirección", key="c_nota")
-            st.form_submit_button("Guardar Cliente y Continuar", on_click=procesar_cliente)
+        with st.form("cli_form", clear_on_submit=True):
+            nom = st.text_input("Nombre")
+            tel = st.text_input("WhatsApp")
+            gps = st.text_input("Ubicación (Link)")
+            if st.form_submit_button("Siguiente"):
+                if nom and tel:
+                    # Regex robusta para lat/lon en links de Google Maps
+                    coords = re.findall(r"([-+]?\d+\.\d+)", gps)
+                    lat = float(coords[0]) if len(coords) >= 2 else 0.0
+                    lon = float(coords[1]) if len(coords) >= 2 else 0.0
+                    
+                    with db_connection() as conn:
+                        conn.execute("INSERT INTO clientes (nombre, tel, lat, lon, fecha_registro) VALUES (?,?,?,?,?)",
+                                     (nom, tel, lat, lon, datetime.now()))
+                        conn.commit()
+                    st.session_state.paso_despacho = 1
+                    st.rerun()
 
     else:
-        st.subheader("🚀 Despacho de Equipos")
-        if st.button("⬅️ Volver a Registro"):
-            st.session_state.paso_despacho = 0
+        st.subheader("🚀 Nueva Salida")
+        with db_connection() as conn:
+            clientes = pd.read_sql_query("SELECT id, nombre FROM clientes ORDER BY id DESC", conn)
+            lavadoras = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Disponible'", conn)
+        
+        if not clientes.empty and not lavadoras.empty:
+            with st.form("despacho_form"):
+                c_sel = st.selectbox("Cliente", clientes['nombre'])
+                l_sel = st.selectbox("Lavadora", lavadoras['serie'])
+                hrs = st.number_input("Horas", 1, 48, 4)
+                if st.form_submit_button("Despachar"):
+                    id_c = clientes[clientes['nombre']==c_sel]['id'].values[0]
+                    id_l = lavadoras[lavadoras['serie']==l_sel]['id'].values[0]
+                    f_fin = datetime.now() + timedelta(hours=hrs)
+                    
+                    with db_connection() as conn:
+                        conn.execute("INSERT INTO alquileres_activos (id_cliente, id_lavadora, inicio, fin) VALUES (?,?,?,?)",
+                                     (id_c, id_l, datetime.now(), f_fin))
+                        conn.execute("UPDATE lavadoras SET estado='En Uso' WHERE id=?", (id_l,))
+                        conn.commit()
+                    st.success("En camino")
+                    st.rerun()
+        else: st.warning("Faltan clientes o lavadoras disponibles.")
+
+# --- MÓDULO: MONITOR (SOLUCIÓN ERROR DE COBRO) ---
+elif menu == "⏱️ Monitor":
+    st.title("⏱️ Control de Tiempos")
+    query = '''SELECT a.id, c.nombre, l.serie, l.id as lid, a.fin FROM alquileres_activos a 
+               JOIN clientes c ON a.id_cliente = c.id JOIN lavadoras l ON a.id_lavadora = l.id'''
+    
+    with db_connection() as conn:
+        activos = pd.read_sql_query(query, conn)
+
+    for _, row in activos.iterrows():
+        with st.container(border=True):
+            col1, col2, col3 = st.columns([2,2,1])
+            col1.write(f"**{row['nombre']}** ({row['serie']})")
+            
+            # Manejo flexible de fechas con Pandas
+            fin_dt = pd.to_datetime(row['fin'])
+            resta = (fin_dt - datetime.now()).total_seconds() / 60
+            col2.info(f"{int(resta)} min restantes") if resta > 0 else col2.error("TIEMPO VENCIDO")
+
+            # Formulario único por fila para evitar pérdida de datos
+            with col3.popover("🏁 Finalizar"):
+                with st.form(f"f_{row['id']}"):
+                    monto = st.number_input("Monto $", min_value=0.0, key=f"m_{row['id']}")
+                    if st.form_submit_button("Cobrar"):
+                        with db_connection() as conn:
+                            conn.execute("INSERT INTO historial_alquileres (id_cliente, id_lavadora, fecha, monto, usuario_cobro) VALUES (?,?,?,?,?)",
+                                         (row['id'], row['lid'], datetime.now(), monto, st.session_state['user']))
+                            conn.execute("UPDATE lavadoras SET estado='Retornando' WHERE id=?", (row['lid'],))
+                            conn.execute("DELETE FROM alquileres_activos WHERE id=?", (row['id'],))
+                            conn.commit()
+                        st.rerun()
+
+# --- MÓDULO: RECEPCIÓN ---
+elif menu == "🚚 Recepción":
+    st.title("📥 Reingreso a Bodega")
+    with db_connection() as conn:
+        df = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Retornando'", conn)
+    
+    for _, l in df.iterrows():
+        if st.button(f"📥 Confirmar {l['serie']}", key=f"rec_{l['id']}"):
+            with db_connection() as conn:
+                conn.execute("UPDATE lavadoras SET estado='Disponible' WHERE id=?", (l['id'],))
+                conn.commit()
             st.rerun()
 
-        df_c = pd.read_sql_query("SELECT id, nombre, tel FROM clientes ORDER BY id DESC", conn)
-        df_l = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Disponible'", conn)
-        df_r = pd.read_sql_query("SELECT usuario FROM usuarios WHERE rol='Repartidor'", conn)
-
-        if not df_c.empty and not df_l.empty:
-            c1, c2 = st.columns(2)
-            c_sel = c1.selectbox("👤 Seleccionar Cliente", df_c['nombre'])
-            l_sel = c1.selectbox("🧺 Seleccionar Lavadora", df_l['serie'])
-            rep_sel = c2.selectbox("🚚 Asignar Repartidor", df_r['usuario'])
-            hrs = c2.number_input("Horas de Alquiler", min_value=1, value=4)
-
-            if st.button("🚀 Confirmar Salida"):
-                row_c = df_c[df_c['nombre'] == c_sel].iloc[0]
-                id_l = df_l[df_l['serie'] == l_sel]['id'].values[0]
-                f_ini = datetime.now()
-                f_fin = f_ini + timedelta(hours=hrs)
-
-                c.execute("INSERT INTO alquileres_activos (id_cliente, id_lavadora, inicio, fin, repartidor_asig) VALUES (?,?,?,?,?)",
-                         (row_c['id'], id_l, f_ini, f_fin, rep_sel))
-                c.execute("UPDATE lavadoras SET estado='En Camino' WHERE id=?", (id_l,))
-                conn.commit()
-
-                msg = f"✅ *¡Hola, {c_sel.upper()}!* \n\nTu lavadora ya salió. Repartidor: *{rep_sel.upper()}*."
-                url_wa = f"https://wa.me/{row_c['tel']}?text={msg.replace(' ', '%20')}"
-                st.success("Salida exitosa.")
-                st.link_button("📲 Enviar WhatsApp", url_wa)
-        else:
-            st.warning("No hay clientes registrados o lavadoras disponibles.")
-
-# --- MÓDULO 2: CONTROL Y COBRO ---
-elif menu == "⏱️ Control de Tiempos":
-    st.title("⏱️ Monitor de Alquileres")
-    query = '''SELECT a.id, c.nombre, c.tel, l.serie, l.id as id_lav, a.fin, a.horas_extras, a.avisado, a.repartidor_asig 
-               FROM alquileres_activos a JOIN clientes c ON a.id_cliente = c.id JOIN lavadoras l ON a.id_lavadora = l.id'''
-    activos = pd.read_sql_query(query, conn)
-
-    if activos.empty:
-        st.info("No hay alquileres activos.")
-    else:
-        for _, row in activos.iterrows():
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([2,2,1.5])
-                f_fin = datetime.strptime(row['fin'], "%Y-%m-%d %H:%M:%S.%f")
-                restante = int((f_fin - datetime.now()).total_seconds() / 60)
-                c1.write(f"### {row['nombre']}")
-                if restante > 0: c2.success(f"⏳ {restante} min restantes")
-                else: c2.error(f"⚠️ Retraso de {abs(restante)} min")
-                
-                with c3:
-                    if st.button("🏁 Cobrar", key=f"cob_{row['id']}"):
-                        monto = st.number_input("Total $", key=f"val_{row['id']}")
-                        if st.button("Confirmar Pago", key=f"fin_{row['id']}"):
-                            c.execute("INSERT INTO historial_alquileres (id_cliente, id_lavadora, fecha, monto, usuario_cobro) VALUES (?,?,?,?,?)",
-                                     (row['id'], row['id_lav'], datetime.now(), monto, user_active))
-                            c.execute("UPDATE lavadoras SET estado='Retornando' WHERE id=?", (row['id_lav'],))
-                            c.execute("DELETE FROM alquileres_activos WHERE id=?", (row['id'],))
-                            conn.commit()
-                            st.rerun()
-
-# --- MÓDULO 3: LOGÍSTICA BODEGA ---
-elif menu == "🚚 Logística Bodega":
-    st.title("📥 Recepción")
-    df_ret = pd.read_sql_query("SELECT id, serie FROM lavadoras WHERE estado='Retornando'", conn)
-    for _, l in df_ret.iterrows():
-        if st.button(f"📥 Recibir {l['serie']}"):
-            c.execute("UPDATE lavadoras SET estado='Disponible' WHERE id=?", (l['id'],))
-            conn.commit(); st.rerun()
-
-# --- MÓDULO 4: REPORTES ---
-elif menu == "📊 Reporte Admin":
-    if rol_actual != "Admin": st.error("Acceso denegado"); st.stop()
-    st.title("📊 Resumen de Ventas")
-    df_h = pd.read_sql_query("SELECT * FROM historial_alquileres", conn)
-    st.metric("Total Recaudado", f"${df_h['monto'].sum():,.2f}")
-    st.dataframe(df_h)
-
-# --- MÓDULO 5: CONFIGURACIÓN ---
-elif menu == "⚙️ Configuración":
-    if rol_actual != "Admin": st.error("Acceso denegado"); st.stop()
-    confirm = st.text_input("Escribe 'BORRAR' para resetear todo")
-    if st.button("RESET TOTAL") and confirm == "BORRAR":
-        c.execute("DELETE FROM clientes"); c.execute("DELETE FROM alquileres_activos")
-        c.execute("DELETE FROM lavadoras"); conn.commit(); st.rerun()
-        
+# --- MÓDULO: REPORTES ---
+elif menu == "📊 Reportes":
+    if st.session_state['rol'] != "Admin": st.error("No autorizado"); st.stop()
+    with db_connection() as conn:
+        df = pd.read_sql_query("SELECT * FROM historial_alquileres", conn)
+    st.metric("Ventas Totales", f"${df['monto'].sum():,.2f}")
+    st.dataframe(df, use_container_width=True)
+            
